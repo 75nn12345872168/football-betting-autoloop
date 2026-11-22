@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-11-22T21:56:57.723645",
+  "settlement": {
+    "cutoff": "2026-11-22 00:00:00",
+    "pending_before": 82,
+    "eligible_played": 15,
+    "settled_now": 0,
+    "result_not_found": 15,
+    "ambiguous_average": 0,
+    "pending_after": 82,
+    "total_settled_all_time": 6,
+    "wins": 2,
+    "half_wins": 2,
+    "losses": 2,
+    "settled_units": 6,
+    "hit_rate_percent": 50.0,
+    "total_profit_units": 0.0228,
+    "total_staked": 0.1086,
+    "cumulative_roi_percent": 20.99,
+    "leagues": [
+      "La Liga",
+      "Ligue 1"
+    ]
+  },
+  "opportunities_count": 1,
+  "opportunities": [
+    {
+      "timestamp": "2026-09-06 17:42:00",
+      "date": "2026-11-28 14:00:00",
+      "home": "Paris Saint Germain",
+      "away": "Lorient",
+      "pred_over": "nan",
+      "edge": "0.0",
+      "market_odds": "1.35",
+      "stake": "0.0239",
+      "status": "PENDING",
+      "result": "nan",
+      "profit": "nan",
+      "league": "Ligue 1",
+      "market": "AH -0.75",
+      "pred": "0.698",
+      "odds_source": "",
+      "price_type": "model",
+      "min_odds": "1.35",
+      "p_model": "0.7383",
+      "p_fair": "0.7383",
+      "ev_percent": "0.0",
+      "stake_kelly": "0.02",
+      "lh": "3.142",
+      "la": "0.787",
+      "rho": "-0.13",
+      "mle_status": "prior(no-history)",
+      "verdict": "APPROVED",
+      "reject_reason": "model tip (p=73.8%, find odds ≥ 1.35)",
+      "stake_raw": "0.02"
+    }
+  ],
+  "rejected_count": 0,
+  "rejected": [],
+  "report_markdown": "📊 <b>تسوية الجولة وإحصائيات المحفظة</b>\n• الصفقات المسواة حديثاً: <b>0</b>\n• صافي الأرباح: <b>+0.023 وحدة</b>\n• العائد التراكمي (ROI): <b>20.99%</b>\n• إجمالي العمليات المعلقة: <b>82</b>\n• معايرة MLE: <code>La Liga: μH=1.58 μA=1.13 ρ=0.049 (fitted) | Ligue 1: μH=1.48 μA=1.18 ρ=-0.130 (prior(no-history))</code>\n• تدقيق الناقد: <code>1 معتمدة / 0 مرفوضة  (بوابة EV ≥ 2.0% | تحكم المحفظة: within caps)</code>\n\n🚀 <b>توصيات النموذج للجولة القادمة</b>\n• <b>2026-11-28 | Ligue 1</b>\n  ⚽ Paris Saint Germain vs Lorient\n  🎯 <b>AH -0.75</b> | احتمال النموذج <b>74%</b> → ابحث عن سعر ≥ <b>1.35</b>\n  📈 EV: <code>+0.0%</code> | حجم الرهان: <b>2.00%</b>\n\n⚠️ <i>الأسعار أعلاه تقديرات النموذج (لم تُتحقق من السوق). التزم بالحد الأدنى للسعر. لأسعار سوق مؤكدة ضبط مفتاح THE_ODDS_API_KEY.</i>\n━━━━━━━━━━━━━━━━━━━━\n⚡ <i>المحرك الكمي نشط | المصدر: paper_trading_ledger_2026.csv</i>",
+  "sent_fixture_keys": [
+    "2026-11-28|Paris Saint Germain|Lorient|AH -0.75"
+  ]
+}
