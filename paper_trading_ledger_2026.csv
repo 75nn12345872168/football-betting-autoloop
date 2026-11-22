@@ -96,3 +96,6 @@ timestamp,date,home,away,pred_over,edge,market_odds,stake,status,result,profit,l
 2026-11-22 22:35:40,2026-11-27 20:00:00,Levante,Racing Santander,0.6471,0.0,,0.02,PENDING,,,La Liga,Over 2.5,0.6471,,,0.6471,1.64
 2026-11-22 22:35:40,2026-11-29 14:00:00,Auxerre,Marseille,0.6001,0.0,,0.02,PENDING,,,Ligue 1,Over 2.5,0.6001,,,0.6001,1.77
 2026-11-22 22:35:40,2026-11-29 15:15:00,Deportivo,Barcelona,0.6267,0.0,,0.02,PENDING,,,La Liga,Over 2.5,0.6267,,,0.6267,1.69
+2026-11-22 22:58:00,2026-11-27 20:00:00,Levante,Racing Santander,0.6471,0.0,,0.02,PENDING,,,La Liga,Over 2.5,0.6471,,,0.6471,1.64
+2026-11-22 22:58:00,2026-11-29 14:00:00,Auxerre,Marseille,0.6001,0.0,,0.02,PENDING,,,Ligue 1,Over 2.5,0.6001,,,0.6001,1.77
+2026-11-22 22:58:00,2026-11-29 15:15:00,Deportivo,Barcelona,0.6267,0.0,,0.02,PENDING,,,La Liga,Over 2.5,0.6267,,,0.6267,1.69
