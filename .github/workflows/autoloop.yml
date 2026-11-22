@@ -33,6 +33,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
       - name: Fetch real odds (The Odds API)
         env:
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
@@ -54,16 +57,19 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: |
           python autoloop_master.py
-          echo "=== Ledger ==="
-          head -n 20 paper_trading_ledger_2026.csv
+          echo "=== Settlement Summary ==="
+          cat ledger_settlement_summary.json || true
+          echo "=== Report ==="
           cat telegram_last_report.txt
 
-      - name: Commit & Push ledger updates
+      - name: Commit & Push ledger and history updates
         run: |
           git config --global user.name "hermes-bot"
           git config --global user.email "hermes@bot.local"
-          git add paper_trading_ledger_2026.csv telegram_last_report.txt autoloop_last_run.json || true
-          git diff --staged --quiet || git commit -m "auto: update ledger $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git add paper_trading_ledger_2026.csv ledger_settlement_summary.json la_liga_matches_2018_2026.csv live_matches_ligue1.csv telegram_last_report.txt autoloop_last_run.json || true
+          git diff --staged --quiet || git commit -m "auto: update ledger & settlement $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push || echo "No push needed or no remote"

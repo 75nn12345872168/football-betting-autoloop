@@ -1,28 +1,35 @@
 """
-autoloop_master.py - Quantitative Automated Betting Engine & Pipeline
+autoloop_master.py — Quantitative Automated Football Betting Engine & Pipeline (v2).
 
-Features:
-1. Dixon-Coles Low-Score Adjustment & Time-Decay Form Weighting
-2. Multiplicative Market Vig Removal (P_fair calculation) & Strict +EV Evaluation
-3. Fractional Kelly Criterion (0.25 Kelly, max 5% cap) for Dynamic Capital Allocation
-4. Rolling 5-Match Form & xG-Proxy Lambda Calculation
-5. Automated Settlement & Multi-Channel Telegram Notification Pipeline
+Key v2 Upgrades:
+  1. Live Fixtures + Live Scores integration via live_data.py (ESPN + football-data.co.uk
+     + optional football-data.org / The Odds API), replacing the frozen September ledger.
+  2. Leak-free, Time-Decayed (xi=0.003), xG-Blended (0.7*xG + 0.3*Goals) TeamStrengthModel
+     connected directly to per-league MLE (mu_h, mu_a, rho) for BOTH La Liga and Ligue 1.
+  3. Unified explicit `selection_side` (HOME / AWAY / DRAW) determined numerically from
+     expected goals (lh vs la) — completely removing the broken `'Paris' in away` heuristic.
+  4. Expanded high-signal markets: 1X2 (Home Win / Away Win), Over/Under 2.5, and
+     Platt-calibrated Ligue 1 AH -0.75 (removing historical -5% overconfidence).
+  5. Broker Mode safety margin: min_odds = round(1.06 / p_calibrated, 2) (+6% buffer)
+     so following min_odds targets genuine +EV instead of zero-margin breakeven.
+  6. Honest settlement reporting: displays real-result hit-rate and verified-odds ROI
+     only (never fabricated ROI from 1.90 placeholder prices).
 """
 
+from __future__ import annotations
+
+import json
+import math
 import os
 import sys
-import math
-import json
 import time
-import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-# Scipy is optional: MLE uses it when available, otherwise falls back to priors.
 try:
     from scipy.optimize import minimize as _scipy_minimize
     _SCIPY_AVAILABLE = True
@@ -30,45 +37,66 @@ except Exception:
     _scipy_minimize = None
     _SCIPY_AVAILABLE = False
 
-# Global baseline priors — the ONLY fallback when league-specific history is absent.
+from live_data import (
+    REPO_DIR,
+    canonical_team_name,
+    fetch_all_live_matches,
+    fetch_upcoming_fixtures,
+    sync_live_history,
+)
+from settle_ledger_auto import (
+    LEDGER,
+    SUMMARY_FILE,
+    determine_selection_side,
+    settle_ledger,
+)
+from team_strength import DEFAULT_XI, TeamStrengthModel, get_model, time_decay_weight
+
+# Global baseline priors (used ONLY when a league has no usable history).
 _PRIOR_MU_HOME = 1.48
 _PRIOR_MU_AWAY = 1.18
-_PRIOR_RHO = -0.13
+_PRIOR_RHO = -0.10
+
+# Broker mode safety margin: require >= +6% buffer over fair calibrated price.
+BROKER_SAFETY_MARGIN = 1.06
 
 # Per-league fitted params: {normalized_league: {mu_home, mu_away, rho, status, n}}.
-# STRICT ISOLATION: a league NEVER inherits another league's fit.
 _FITTED_BY_LEAGUE: Dict[str, Dict[str, Any]] = {}
 
-# League -> scored-history CSV. Leagues absent from this map have no usable
-# history and resolve silently to global priors (no cross-league inheritance).
-_LEAGUE_HISTORY: Dict[str, str] = {
-    "la liga": "la_liga_matches_2018_2026.csv",
+# Walk-forward out-of-sample Platt calibrators: {(league_lower, market_key): (a, b)}
+# where p_cal = sigmoid(a * logit(p_raw) + b).
+# Default prior Platt parameters for Ligue 1 AH -0.75 (empirically corrects the -5% tail
+# overconfidence found in 2,717-match walk-forward audit); also dynamically refitted
+# when walk-forward history is available.
+_DEFAULT_PLATT_PARAMS: Dict[Tuple[str, str], Tuple[float, float]] = {
+    ("ligue 1", "ah_-0.75"): (0.82, -0.10),
 }
+_PLATT_CALIBRATORS: Dict[Tuple[str, str], Tuple[float, float]] = dict(_DEFAULT_PLATT_PARAMS)
+
+ACTIVE_LEAGUES: Tuple[str, ...] = ("La Liga", "Ligue 1")
 
 
 def _norm_league(league: Any) -> str:
-    """Canonical league key for strict per-league mapping."""
     return str(league or "").strip().lower()
 
 
 def _prior_result(status: str, n: int = 0) -> Dict[str, Any]:
-    """Baseline global priors — no fitted data involved."""
-    return {"mu_home": _PRIOR_MU_HOME, "mu_away": _PRIOR_MU_AWAY,
-            "rho": _PRIOR_RHO, "status": status, "n": int(n)}
+    return {
+        "mu_home": _PRIOR_MU_HOME,
+        "mu_away": _PRIOR_MU_AWAY,
+        "rho": _PRIOR_RHO,
+        "status": status,
+        "n": int(n),
+    }
 
 
 def _store_league_result(league_key: str, result: Dict[str, Any]) -> Dict[str, Any]:
-    """Record this league's params in isolation and return them."""
     _FITTED_BY_LEAGUE[league_key] = dict(result)
     return result
 
 
 def get_league_params(league: Any) -> Tuple[float, float, float]:
-    """
-    Return (mu_home, mu_away, rho) STRICTLY for the requested league.
-    Falls back to global priors when that league has no fitted entry —
-    never to another league's parameters.
-    """
+    """Return (mu_home, mu_away, rho) STRICTLY for the requested league."""
     entry = _FITTED_BY_LEAGUE.get(_norm_league(league))
     if entry:
         return (float(entry["mu_home"]), float(entry["mu_away"]), float(entry["rho"]))
@@ -76,58 +104,44 @@ def get_league_params(league: Any) -> Tuple[float, float, float]:
 
 
 def get_league_mle_status(league: Any) -> str:
-    """Provenance status for a league's params (fitted / cached / prior-*)."""
     entry = _FITTED_BY_LEAGUE.get(_norm_league(league))
     return str(entry.get("status", "prior")) if entry else "prior"
 
 
 # ==============================================================================
-# 1b. DYNAMIC MLE CALIBRATION (league baselines mu_h, mu_a + Dixon-Coles rho)
+# 1. DYNAMIC PER-LEAGUE MLE CALIBRATION (La Liga + Ligue 1)
 # ==============================================================================
 
 def _mle_cache_path() -> Path:
-    """Cache file for fitted MLE params (7-day TTL)."""
-    try:
-        return Path(__file__).parent / "league_mle_params.json"
-    except Exception:
-        return Path("league_mle_params.json")
+    return REPO_DIR / "league_mle_params.json"
 
 
-def _load_mle_cache(max_age_days: float = 7.0) -> Dict[str, Dict[str, Any]]:
-    """
-    Load cached per-league MLE params when fresh; otherwise {}.
-    Migrates the legacy flat single-league format to {"la liga": ...} —
-    that cache was fitted on La Liga data, so it stays quarantined there.
-    """
+def _load_mle_cache(max_age_days: float = 3.0) -> Dict[str, Dict[str, Any]]:
     try:
         p = _mle_cache_path()
         if not p.exists():
             return {}
-        age = time.time() - p.stat().st_mtime
-        if age > max_age_days * 86400:
+        if (time.time() - p.stat().st_mtime) > max_age_days * 86400:
             return {}
         raw = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {}
-        if all(k in raw for k in ("mu_home", "mu_away", "rho")):
-            return {"la liga": {"mu_home": float(raw["mu_home"]),
-                                "mu_away": float(raw["mu_away"]),
-                                "rho": float(raw["rho"]),
-                                "status": "cached", "n": int(raw.get("n", 0))}}
         out: Dict[str, Dict[str, Any]] = {}
         for k, v in raw.items():
             if isinstance(v, dict) and all(kk in v for kk in ("mu_home", "mu_away", "rho")):
-                out[_norm_league(k)] = {"mu_home": float(v["mu_home"]),
-                                       "mu_away": float(v["mu_away"]),
-                                       "rho": float(v["rho"]),
-                                       "status": "cached", "n": int(v.get("n", 0))}
+                out[_norm_league(k)] = {
+                    "mu_home": float(v["mu_home"]),
+                    "mu_away": float(v["mu_away"]),
+                    "rho": float(v["rho"]),
+                    "status": "cached",
+                    "n": int(v.get("n", 0)),
+                }
         return out
     except Exception:
         return {}
 
 
 def _save_mle_cache(league_key: str, entry: Dict[str, Any]) -> None:
-    """Merge one league's fitted params into the per-league cache (best-effort)."""
     try:
         p = _mle_cache_path()
         merged: Dict[str, Any] = {}
@@ -135,16 +149,15 @@ def _save_mle_cache(league_key: str, entry: Dict[str, Any]) -> None:
             try:
                 raw = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
-                    if all(k in raw for k in ("mu_home", "mu_away", "rho")):
-                        merged = {"la liga": raw}
-                    else:
-                        merged = {k: v for k, v in raw.items() if isinstance(v, dict)}
+                    merged = {k: v for k, v in raw.items() if isinstance(v, dict)}
             except Exception:
                 merged = {}
-        merged[league_key] = {"mu_home": float(entry["mu_home"]),
-                              "mu_away": float(entry["mu_away"]),
-                              "rho": float(entry["rho"]),
-                              "n": int(entry.get("n", 0))}
+        merged[league_key] = {
+            "mu_home": float(entry["mu_home"]),
+            "mu_away": float(entry["mu_away"]),
+            "rho": float(entry["rho"]),
+            "n": int(entry.get("n", 0)),
+        }
         p.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -153,24 +166,20 @@ def _save_mle_cache(league_key: str, entry: Dict[str, Any]) -> None:
 def _dixon_coles_nll(
     params: np.ndarray, gh: np.ndarray, ga: np.ndarray, w: np.ndarray
 ) -> float:
-    """
-    Time-weighted negative log-likelihood for independent Poisson + Dixon-Coles
-    low-score correction. params = [log_mu_h, log_mu_a, rho].
-    """
     log_mu_h, log_mu_a, rho = float(params[0]), float(params[1]), float(params[2])
     mu_h = float(np.clip(np.exp(log_mu_h), 0.5, 3.0))
     mu_a = float(np.clip(np.exp(log_mu_a), 0.5, 3.0))
-    rho = float(np.clip(rho, -0.30, 0.30))
-    # Poisson log-pmf (vectorized, gammaln-free via lgamma from math on scalars is slow;
-    # use Stirling-free exact log factorial via np for small goals <= 8, else gammaln approx).
-    from math import lgamma as _lg
+    rho = float(np.clip(rho, -0.25, 0.05))
+    lg = math.lgamma
     nll = 0.0
     tot_w = 0.0
+    log_mh = math.log(mu_h)
+    log_ma = math.log(mu_a)
     for i in range(gh.shape[0]):
         x, y = int(gh[i]), int(ga[i])
         if x > 12 or y > 12:
             continue
-        lp = x * math.log(mu_h) - mu_h - _lg(x + 1) + y * math.log(mu_a) - mu_a - _lg(y + 1)
+        lp = x * log_mh - mu_h - lg(x + 1) + y * log_ma - mu_a - lg(y + 1)
         tau = 1.0
         if x == 0 and y == 0:
             tau = max(1e-6, 1.0 - mu_h * mu_a * rho)
@@ -186,114 +195,107 @@ def _dixon_coles_nll(
         tot_w += wi
     if tot_w > 0:
         nll /= tot_w
-    return float(nll) + 0.02 * (rho ** 2)  # mild ridge on rho for stability
+    # Mild regularization toward Dixon-Coles negative-dependence prior (-0.08)
+    return float(nll) + 0.03 * ((rho + 0.08) ** 2)
 
 
 def fit_league_mle_dynamic(
     league: str = "La Liga",
-    history_csv: Optional[str] = None,
+    team_model: Optional[TeamStrengthModel] = None,
+    as_of: Any = None,
     max_matches: int = 760,
     time_budget_s: float = 4.0,
-    xi: float = 0.005,
+    xi: float = DEFAULT_XI,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """
-    Fit scoring baselines (mu_home, mu_away) and Dixon-Coles rho by
-    time-weighted Maximum Likelihood on THIS league's recent results only.
-
-    STRICT ISOLATION: when this league has no history file or n < 100,
-    fall back silently to global priors — NEVER inherit another league's fit.
-    Design for CI safety: 3 free params, capped sample, L-BFGS-B maxiter=25,
-    hard time budget, 7-day per-league disk cache. Never raises.
+    Fit scoring baselines (mu_home, mu_away) and Dixon-Coles rho by time-weighted
+    Maximum Likelihood on THIS league's matches strictly before `as_of`.
+    Works for BOTH La Liga and Ligue 1 via TeamStrengthModel.
     """
     league_key = _norm_league(league)
     t0 = time.time()
 
-    # Resolve THIS league's history only (explicit arg wins, else registry).
-    if history_csv is None:
-        history_csv = _LEAGUE_HISTORY.get(league_key)
-    if not history_csv:
-        return _store_league_result(league_key, _prior_result("prior(no-history)"))
-
-    # 0. Fresh per-league cache short-circuits the fit (~0.001s on repeat runs).
-    try:
+    if use_cache and as_of is None:
         cached = _load_mle_cache().get(league_key)
         if cached:
-            entry = {"mu_home": float(np.clip(cached["mu_home"], 0.5, 3.0)),
-                     "mu_away": float(np.clip(cached["mu_away"], 0.5, 3.0)),
-                     "rho": float(np.clip(cached["rho"], -0.30, 0.30)),
-                     "status": "cached", "n": int(cached.get("n", 0))}
+            entry = {
+                "mu_home": float(np.clip(cached["mu_home"], 0.5, 3.0)),
+                "mu_away": float(np.clip(cached["mu_away"], 0.5, 3.0)),
+                "rho": float(np.clip(cached["rho"], -0.25, 0.05)),
+                "status": "cached",
+                "n": int(cached.get("n", 0)),
+            }
             return _store_league_result(league_key, entry)
-    except Exception:
-        pass
 
-    if not _SCIPY_AVAILABLE or _scipy_minimize is None:
-        return _store_league_result(league_key, _prior_result("prior(no-scipy)"))
-
-    # 1. Load recent scored matches (most recent last).
     try:
-        base = Path(__file__).parent
-        cand = base / history_csv
-        if not cand.exists():
-            cand = Path(history_csv)
-        if not cand.exists():
-            return _store_league_result(league_key, _prior_result("prior(no-history)"))
-        df = pd.read_csv(cand, usecols=["date", "goals_home", "goals_away"])
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date", "goals_home", "goals_away"])
-        df = df.sort_values("date").tail(max_matches)
+        model = team_model or get_model()
+        df = model.get_league_match_dataframe(league, as_of=as_of)
         if len(df) < 100:
             return _store_league_result(league_key, _prior_result("prior(thin-history)", int(len(df))))
+        df = df.sort_values("date").tail(max_matches)
         gh = df["goals_home"].to_numpy(dtype=float)
         ga = df["goals_away"].to_numpy(dtype=float)
-        days_ago = (df["date"].max() - df["date"]).dt.total_seconds().to_numpy(dtype=float) / 86400.0
-        w = np.exp(-xi * np.clip(days_ago, 0, 2000))
+        ref_dt = pd.to_datetime(as_of) if as_of is not None else df["date"].max()
+        days_ago = (ref_dt - df["date"]).dt.total_seconds().to_numpy(dtype=float) / 86400.0
+        w = np.exp(-float(xi) * np.clip(days_ago, 0.0, 2000.0))
     except Exception:
         return _store_league_result(league_key, _prior_result("prior(load-fail)"))
 
-    # 2. Bounded L-BFGS-B fit from moment-matched start.
     try:
         m0_h = float(np.average(gh, weights=w))
         m0_a = float(np.average(ga, weights=w))
-        x0 = np.array([math.log(max(0.5, min(3.0, m0_h))),
-                       math.log(max(0.5, min(3.0, m0_a))), -0.10], dtype=float)
-        bounds = [(math.log(0.5), math.log(3.0)), (math.log(0.5), math.log(3.0)), (-0.30, 0.30)]
-        res = _scipy_minimize(_dixon_coles_nll, x0, args=(gh, ga, w),
-                              method="L-BFGS-B", bounds=bounds,
-                              options={"maxiter": 25, "ftol": 1e-6, "gtol": 1e-4})
-        if time.time() - t0 > time_budget_s:
-            raise TimeoutError("mle-budget")
-        if res is not None and np.all(np.isfinite(res.x)):
-            entry = {"mu_home": float(np.clip(math.exp(float(res.x[0])), 0.5, 3.0)),
-                     "mu_away": float(np.clip(math.exp(float(res.x[1])), 0.5, 3.0)),
-                     "rho": float(np.clip(float(res.x[2]), -0.30, 0.30)),
-                     "status": "fitted", "n": int(len(df)),
-                     "fun": float(res.fun) if hasattr(res, "fun") else None,
-                     "nit": int(getattr(res, "nit", -1))}
+        if _SCIPY_AVAILABLE and _scipy_minimize is not None:
+            x0 = np.array(
+                [math.log(max(0.5, min(3.0, m0_h))), math.log(max(0.5, min(3.0, m0_a))), -0.08],
+                dtype=float,
+            )
+            bounds = [(math.log(0.5), math.log(3.0)), (math.log(0.5), math.log(3.0)), (-0.25, 0.05)]
+            res = _scipy_minimize(
+                _dixon_coles_nll,
+                x0,
+                args=(gh, ga, w),
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={"maxiter": 25, "ftol": 1e-6, "gtol": 1e-4},
+            )
+            if time.time() - t0 > time_budget_s:
+                raise TimeoutError("mle-budget")
+            if res is not None and np.all(np.isfinite(res.x)):
+                best_mh = float(np.clip(math.exp(float(res.x[0])), 0.5, 3.0))
+                best_ma = float(np.clip(math.exp(float(res.x[1])), 0.5, 3.0))
+                best_rho = float(np.clip(float(res.x[2]), -0.25, 0.05))
+            else:
+                raise RuntimeError("scipy-invalid")
+        else:
+            # Pure-NumPy fallback MLE (moment-matched baselines + 1D grid search over rho)
+            best_mh = float(np.clip(m0_h, 0.5, 3.0))
+            best_ma = float(np.clip(m0_a, 0.5, 3.0))
+            lmh, lma = math.log(best_mh), math.log(best_ma)
+            rho_grid = np.linspace(-0.25, 0.05, 31)
+            best_rho = min(rho_grid, key=lambda r: _dixon_coles_nll(np.array([lmh, lma, r]), gh, ga, w))
+            best_rho = float(best_rho)
+
+        entry = {
+            "mu_home": best_mh,
+            "mu_away": best_ma,
+            "rho": best_rho,
+            "status": "fitted",
+            "n": int(len(df)),
+        }
+        if as_of is None:
             _save_mle_cache(league_key, entry)
-            return _store_league_result(league_key, entry)
+        return _store_league_result(league_key, entry)
     except Exception:
         pass
-    n_obs = int(len(df)) if "df" in dir() else 0
-    return _store_league_result(league_key, _prior_result("prior(fit-fallback)", n_obs))
+    return _store_league_result(league_key, _prior_result("prior(fit-fallback)", int(len(df))))
 
 
 # ==============================================================================
-# 1. QUANTITATIVE MODELING: DIXON-COLES & FORM WEIGHTING
+# 2. DIXON-COLES PRICING & PLATT PROBABILITY CALIBRATION
 # ==============================================================================
 
-def time_decay_weight(days_ago: float, xi: float = 0.005) -> float:
-    """
-    Exponential time-decay weighting function.
-    Recent matches carry higher weight: w(t) = exp(-xi * Delta_t).
-    """
-    return math.exp(-xi * max(0.0, float(days_ago)))
-
-
-def dixon_coles_tau(x: int, y: int, lambda_h: float, lambda_a: float, rho: float = -0.13) -> float:
-    """
-    Dixon-Coles bivariate adjustment factor tau(x, y) for low-scoring match outcomes.
-    Corrects for the structural correlation between home and away goals in 0-0, 1-0, 0-1, 1-1.
-    """
+def dixon_coles_tau(x: int, y: int, lambda_h: float, lambda_a: float, rho: float = -0.10) -> float:
     if x == 0 and y == 0:
         return max(0.0, 1.0 - lambda_h * lambda_a * rho)
     elif x == 1 and y == 0:
@@ -305,72 +307,51 @@ def dixon_coles_tau(x: int, y: int, lambda_h: float, lambda_a: float, rho: float
     return 1.0
 
 
-def compute_dixon_coles_probs(lambda_h: float, lambda_a: float, max_goals: int = 8, rho: Optional[float] = None, league: Any = None) -> np.ndarray:
-    """
-    Generates full joint score probability matrix P[x, y] using Dixon-Coles adjusted Poisson distribution.
-    rho resolution order: explicit arg > this league's fitted rho > global prior rho.
-    With league=None and rho=None the neutral global prior is used (no cross-league leak).
-    """
+def compute_dixon_coles_probs(
+    lambda_h: float,
+    lambda_a: float,
+    max_goals: int = 8,
+    rho: Optional[float] = None,
+    league: Any = None,
+) -> np.ndarray:
     if rho is None:
         rho = get_league_params(league)[2] if league is not None else _PRIOR_RHO
-    lambda_h = max(0.2, min(5.0, lambda_h))
-    lambda_a = max(0.2, min(5.0, lambda_a))
-    
+    lambda_h = max(0.2, min(5.0, float(lambda_h)))
+    lambda_a = max(0.2, min(5.0, float(lambda_a)))
+
     matrix = np.zeros((max_goals + 1, max_goals + 1), dtype=float)
-    
-    # Precompute Poisson marginals
-    p_h = np.array([(lambda_h**x * math.exp(-lambda_h)) / math.factorial(x) for x in range(max_goals + 1)])
-    p_a = np.array([(lambda_a**y * math.exp(-lambda_a)) / math.factorial(y) for y in range(max_goals + 1)])
-    
+    p_h = np.array([(lambda_h ** x * math.exp(-lambda_h)) / math.factorial(x) for x in range(max_goals + 1)])
+    p_a = np.array([(lambda_a ** y * math.exp(-lambda_a)) / math.factorial(y) for y in range(max_goals + 1)])
+
     for x in range(max_goals + 1):
         for y in range(max_goals + 1):
-            tau = dixon_coles_tau(x, y, lambda_h, lambda_a, rho)
-            matrix[x, y] = tau * p_h[x] * p_a[y]
-            
-    # Normalize matrix to ensure sum = 1.0
+            matrix[x, y] = dixon_coles_tau(x, y, lambda_h, lambda_a, rho) * p_h[x] * p_a[y]
+
     total_p = matrix.sum()
     if total_p > 0:
         matrix /= total_p
-        
     return matrix
 
 
 def calculate_market_probabilities(prob_matrix: np.ndarray) -> Dict[str, float]:
-    """
-    Extracts standard betting market probabilities from Dixon-Coles joint distribution matrix:
-    - Over 2.5 Goals
-    - Asian Handicap -0.75 (Home / Away)
-    - Both Teams To Score (BTTS Yes)
-    - 1X2 Probabilities (Home Win, Draw, Away Win)
-    """
     max_goals = prob_matrix.shape[0] - 1
-    
-    # Over / Under 2.5
     under_25 = 0.0
     for x in range(max_goals + 1):
         for y in range(max_goals + 1):
             if x + y <= 2:
                 under_25 += prob_matrix[x, y]
     over_25 = 1.0 - under_25
-    
-    # BTTS
+
     p_0_any = prob_matrix[0, :].sum()
     p_any_0 = prob_matrix[:, 0].sum()
     p_0_0 = prob_matrix[0, 0]
-    btts_no = p_0_any + p_any_0 - p_0_0
-    btts_yes = 1.0 - btts_no
-    
-    # 1X2 Probabilities
-    home_win = np.tril(prob_matrix, -1).sum()
-    draw = np.trace(prob_matrix)
-    away_win = np.triu(prob_matrix, 1).sum()
-    
-    # Asian Handicap -0.75 (Home: Full win if diff >= 2, Half win if diff == 1)
-    p_diff_ge_2_h = 0.0
-    p_diff_1_h = 0.0
-    p_diff_ge_2_a = 0.0
-    p_diff_1_a = 0.0
-    
+    btts_yes = 1.0 - (p_0_any + p_any_0 - p_0_0)
+
+    home_win = float(np.tril(prob_matrix, -1).sum())
+    draw = float(np.trace(prob_matrix))
+    away_win = float(np.triu(prob_matrix, 1).sum())
+
+    p_diff_ge_2_h = p_diff_1_h = p_diff_ge_2_a = p_diff_1_a = 0.0
     for x in range(max_goals + 1):
         for y in range(max_goals + 1):
             diff = x - y
@@ -382,76 +363,144 @@ def calculate_market_probabilities(prob_matrix: np.ndarray) -> Dict[str, float]:
                 p_diff_ge_2_a += prob_matrix[x, y]
             elif diff == -1:
                 p_diff_1_a += prob_matrix[x, y]
-                
-    # Effective equivalent win prob for AH -0.75: P(diff>=2) + 0.5 * P(diff==1)
+
     ah_minus_075_home = p_diff_ge_2_h + 0.5 * p_diff_1_h
     ah_minus_075_away = p_diff_ge_2_a + 0.5 * p_diff_1_a
-    
+
     return {
-        'over_2.5': round(float(over_25), 4),
-        'under_2.5': round(float(under_25), 4),
-        'btts_yes': round(float(btts_yes), 4),
-        'home_win': round(float(home_win), 4),
-        'draw': round(float(draw), 4),
-        'away_win': round(float(away_win), 4),
-        'ah_-0.75_home': round(float(ah_minus_075_home), 4),
-        'ah_-0.75_away': round(float(ah_minus_075_away), 4),
+        "over_2.5": round(float(over_25), 4),
+        "under_2.5": round(float(under_25), 4),
+        "btts_yes": round(float(btts_yes), 4),
+        "home_win": round(home_win, 4),
+        "draw": round(draw, 4),
+        "away_win": round(away_win, 4),
+        "ah_-0.75_home": round(float(ah_minus_075_home), 4),
+        "ah_-0.75_away": round(float(ah_minus_075_away), 4),
     }
 
 
+def _logit(p: float) -> float:
+    pc = min(0.999, max(0.001, float(p)))
+    return math.log(pc / (1.0 - pc))
+
+
+def _sigmoid(z: float) -> float:
+    if z >= 0:
+        ez = math.exp(-z)
+        return 1.0 / (1.0 + ez)
+    ez = math.exp(z)
+    return ez / (1.0 + ez)
+
+
+def fit_platt_calibrator(probs: np.ndarray, targets: np.ndarray) -> Tuple[float, float]:
+    """
+    Fit Platt scaling parameters (a, b) minimizing log-loss of
+    sigmoid(a * logit(p) + b) against realized outcomes (supports 0, 0.5, 1).
+    Works with scipy (L-BFGS-B) or pure-NumPy gradient descent fallback.
+    """
+    p = np.clip(np.asarray(probs, dtype=float), 1e-4, 1.0 - 1e-4)
+    y = np.clip(np.asarray(targets, dtype=float), 0.0, 1.0)
+    if len(p) < 50:
+        return (1.0, 0.0)
+    logits = np.log(p / (1.0 - p))
+
+    def _loss(ab: np.ndarray) -> float:
+        a, b = float(ab[0]), float(ab[1])
+        z = np.clip(a * logits + b, -20.0, 20.0)
+        q = 1.0 / (1.0 + np.exp(-z))
+        eps = 1e-9
+        ll = -np.mean(y * np.log(np.clip(q, eps, 1.0)) + (1.0 - y) * np.log(np.clip(1.0 - q, eps, 1.0)))
+        return float(ll) + 0.005 * ((a - 1.0) ** 2 + b ** 2)
+
+    if _SCIPY_AVAILABLE and _scipy_minimize is not None:
+        res = _scipy_minimize(
+            _loss,
+            np.array([1.0, 0.0]),
+            method="L-BFGS-B",
+            bounds=[(0.4, 1.5), (-0.6, 0.6)],
+        )
+        if res is not None and np.all(np.isfinite(res.x)):
+            return (round(float(res.x[0]), 4), round(float(res.x[1]), 4))
+        return (1.0, 0.0)
+
+    # Pure-NumPy gradient descent fallback
+    a, b = 1.0, 0.0
+    lr = 0.2
+    for _ in range(300):
+        z = np.clip(a * logits + b, -20.0, 20.0)
+        q = 1.0 / (1.0 + np.exp(-z))
+        diff = q - y
+        ga = float(np.mean(diff * logits)) + 0.01 * (a - 1.0)
+        gb = float(np.mean(diff)) + 0.01 * b
+        a = float(np.clip(a - lr * ga, 0.4, 1.5))
+        b = float(np.clip(b - lr * gb, -0.6, 0.6))
+    return (round(a, 4), round(b, 4))
+
+
+def calibrate_probability(
+    p_raw: float,
+    league: str,
+    market: str,
+    calibrators: Optional[Dict[Tuple[str, str], Tuple[float, float]]] = None,
+) -> float:
+    """Apply Platt calibration for markets with known calibration bias (e.g. Ligue 1 AH -0.75)."""
+    cal_map = calibrators if calibrators is not None else _PLATT_CALIBRATORS
+    mk_low = str(market or "").strip().lower()
+    mkey = "ah_-0.75" if ("ah" in mk_low or "handicap" in mk_low) else mk_low
+    params = cal_map.get((_norm_league(league), mkey))
+    if not params:
+        return round(float(np.clip(p_raw, 0.01, 0.99)), 4)
+    a, b = params
+    p_cal = _sigmoid(a * _logit(p_raw) + b)
+    return round(float(np.clip(p_cal, 0.01, 0.99)), 4)
+
+
+def compute_broker_min_odds(
+    p_calibrated: float, safety_margin: float = BROKER_SAFETY_MARGIN
+) -> float:
+    """
+    Compute Broker Mode minimum odds with explicit +6% safety margin:
+    min_odds = round(1.06 / p_calibrated, 2).
+    """
+    p = max(0.01, min(0.99, float(p_calibrated)))
+    return round(float(safety_margin) / p, 2)
+
+
 # ==============================================================================
-# 2. MARKET VIG REMOVAL & FAIR VALUE (+EV) EVALUATION
+# 3. MARKET VIG REMOVAL, +EV & KELLY SIZING
 # ==============================================================================
 
-def remove_market_vig(odds_target: float, odds_counter: Optional[float] = None, default_margin: float = 1.055) -> float:
-    """
-    Removes bookmaker overround (vig) using the multiplicative method.
-    Returns the true fair implied market probability P_fair.
-    """
+def remove_market_vig(
+    odds_target: float, odds_counter: Optional[float] = None, default_margin: float = 1.055
+) -> float:
     if odds_target <= 1.0:
         return 0.5
-        
     if odds_counter is not None and odds_counter > 1.0:
         overround = (1.0 / odds_target) + (1.0 / odds_counter)
         p_fair = (1.0 / odds_target) / overround
     else:
-        raw_implied = 1.0 / odds_target
-        p_fair = raw_implied / default_margin
-        
+        p_fair = (1.0 / odds_target) / default_margin
     return max(0.01, min(0.99, float(p_fair)))
 
 
 def compute_ev(p_model: float, bookie_odds: float) -> float:
-    """
-    Calculates Expected Value (+EV):
-    EV = (P_model * Odds) - 1
-    """
     return float((p_model * bookie_odds) - 1.0)
 
 
-def calculate_fractional_kelly(p_model: float, bookie_odds: float, fraction: float = 0.25, max_stake: float = 0.05) -> float:
-    """
-    Fractional Kelly Criterion for optimal capital growth with controlled variance.
-    Full Kelly = (P_model * Odds - 1) / (Odds - 1) = EV / (Odds - 1)
-    Recommended Stake = min(max_stake, max(0, fraction * Full Kelly))
-    """
+def calculate_fractional_kelly(
+    p_model: float, bookie_odds: float, fraction: float = 0.25, max_stake: float = 0.05
+) -> float:
     if bookie_odds <= 1.0:
         return 0.0
     ev = compute_ev(p_model, bookie_odds)
     if ev <= 0.0:
         return 0.0
-    
-    b = bookie_odds - 1.0
-    full_kelly = ev / b
-    fractional_kelly = fraction * full_kelly
-    
-    # Cap stake to prevent overexposure
-    stake = min(max_stake, max(0.0, fractional_kelly))
-    return round(float(stake), 4)
+    full_kelly = ev / (bookie_odds - 1.0)
+    return round(float(min(max_stake, max(0.0, fraction * full_kelly))), 4)
 
 
 # ==============================================================================
-# 3. xG & ROLLING FORM INTENSITY ESTIMATION
+# 4. EXPECTED GOALS (LAMBDA) ESTIMATION — CONNECTED TO MLE & CAUSAL TEAM STRENGTH
 # ==============================================================================
 
 def estimate_match_lambdas(
@@ -460,180 +509,293 @@ def estimate_match_lambdas(
     league: str,
     league_avg_home: Optional[float] = None,
     league_avg_away: Optional[float] = None,
-    rolling_matches: int = 5,
-    team_model=None,
-    fixture_date=None,
+    team_model: Optional[TeamStrengthModel] = None,
+    fixture_date: Any = None,
+    use_mle_baselines: bool = True,
 ) -> Tuple[float, float]:
     """
-    Computes expected goal intensities (lambda_home, lambda_away) with
-    DATA-DRIVEN club strengths (team_strength.TeamStrengthModel) instead of the
-    old hand-coded `top_elites` constants. League baselines resolve STRICTLY
-    per league. A club without usable history falls back to the league average
-    (strength = 1.0) — never to another league's numbers. If `fixture_date` is
-    given, only matches played BEFORE it are used (no look-ahead leakage).
+    Compute (lambda_home, lambda_away) using:
+      * Per-league MLE baselines (mu_h, mu_a) from fit_league_mle_dynamic when
+        calibrated for live fixtures (or strictly causal as_of league baselines
+        for historical/walk-forward evaluation).
+      * Leak-free, time-decayed (xi=0.003), xG-blended club strengths (att, def).
     """
-    import pandas as pd
-    if team_model is None:
-        try:
-            from team_strength import get_model
-            team_model = get_model()
-        except Exception:
-            team_model = None
+    model = team_model or get_model()
+    as_of = pd.to_datetime(fixture_date, errors="coerce") if fixture_date is not None else None
+    if pd.isna(as_of):
+        as_of = None
 
-    if team_model is not None:
-        mu_h, mu_a, _ = team_model.league_baselines(league)
+    # Resolve league baselines (strictly per league; MLE connected when fitted!)
+    if league_avg_home is not None and league_avg_away is not None:
+        mu_h, mu_a = float(league_avg_home), float(league_avg_away)
+    else:
+        mle_entry = _FITTED_BY_LEAGUE.get(_norm_league(league))
+        is_future_or_live = as_of is None or as_of >= pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+        if use_mle_baselines and mle_entry and mle_entry.get("status") in ("fitted", "cached") and is_future_or_live:
+            mu_h = float(mle_entry["mu_home"])
+            mu_a = float(mle_entry["mu_away"])
+        else:
+            mu_h, mu_a, _ = model.league_baselines(league, as_of=as_of)
+
         if league_avg_home is not None:
-            mu_h = league_avg_home
+            mu_h = float(league_avg_home)
         if league_avg_away is not None:
-            mu_a = league_avg_away
-        as_of = pd.to_datetime(fixture_date) if fixture_date is not None else None
-        att_h, def_h = team_model.strength(league, home_team, as_of=as_of)
-        att_a, def_a = team_model.strength(league, away_team, as_of=as_of)
-        # Dixon-Coles factorisation: lambda = league baseline * att(home) * def(away)
-        lambda_h = mu_h * att_h * def_a
-        lambda_a = mu_a * att_a * def_h
-        return (round(float(min(5.0, max(0.3, lambda_h))), 3),
-                round(float(min(5.0, max(0.3, lambda_a))), 3))
+            mu_a = float(league_avg_away)
 
-    # Fallback (no data available): league-average priors, strength 1.0 both.
-    _lg_mu_h, _lg_mu_a, _ = get_league_params(league)
-    mu_h = league_avg_home if league_avg_home is not None else _lg_mu_h
-    mu_a = league_avg_away if league_avg_away is not None else _lg_mu_a
-    return round(float(mu_h), 3), round(float(mu_a), 3)
+    att_h, def_h = model.strength(league, home_team, as_of=as_of)
+    att_a, def_a = model.strength(league, away_team, as_of=as_of)
+
+    lambda_h = mu_h * att_h * def_a
+    lambda_a = mu_a * att_a * def_h
+    return (
+        round(float(min(5.0, max(0.3, lambda_h))), 3),
+        round(float(min(5.0, max(0.3, lambda_a))), 3),
+    )
 
 
 # ==============================================================================
-# 3b. MULTI-AGENT ORCHESTRATION LAYER (wrappers only — math lives above)
+# 5. AGENTS: DATA INGESTION (LIVE FIXTURES), QUANT, RISK, CRITIC, PORTFOLIO
 # ==============================================================================
-# Each agent delegates to the audited module-level functions. No probability,
-# pricing, or sizing formula is reimplemented here.
-
 
 class DataIngestionAgent:
-    """Loads ledger fixtures and discovers active leagues (I/O only)."""
+    """
+    Ingests upcoming fixtures from LIVE football feeds (ESPN / football-data.org)
+    and merges with any pending verified-odds rows from paper_trading_ledger_2026.csv.
+    Falls back cleanly to ledger PENDING rows when offline.
+    """
 
-    def __init__(self, ledger_path: str = "paper_trading_ledger_2026.csv",
-                     window_days: int = 8) -> None:
-            self.ledger_path = Path(__file__).parent / ledger_path
-            if not self.ledger_path.exists():
-                self.ledger_path = Path(ledger_path)
-            # ROLLING window: always the NEXT `window_days` from today, so each run
-            # picks the current upcoming gameweek. The old hardcoded start
-            # ("2026-09-06") froze the window and re-sent the same early fixtures
-            # every week for months. The window now advances with the clock.
-            self.window_start = pd.Timestamp.now().normalize()
-            self.window_end = self.window_start + pd.Timedelta(days=window_days)
+    def __init__(
+        self,
+        ledger_path: str = LEDGER,
+        window_days: int = 8,
+        leagues: Tuple[str, ...] = ACTIVE_LEAGUES,
+        use_live_fixtures: bool = True,
+    ) -> None:
+        p = Path(ledger_path)
+        self.ledger_path = p if p.exists() else (REPO_DIR / ledger_path)
+        self.window_days = int(window_days)
+        self.active_leagues = tuple(leagues)
+        self.use_live_fixtures = bool(use_live_fixtures)
+        self.window_start = pd.Timestamp.now().normalize()
+        self.window_end = self.window_start + pd.Timedelta(days=self.window_days)
 
     def leagues(self) -> List[str]:
-        """Distinct leagues in the ledger (fallback: La Liga)."""
-        try:
-            if self.ledger_path.exists():
-                found = sorted(pd.read_csv(self.ledger_path, usecols=["league"])["league"]
-                               .dropna().astype(str).str.strip().unique().tolist())
-                if found:
-                    return found
-        except Exception:
-            pass
-        return ["La Liga"]
+        found = set(self.active_leagues)
+        if self.ledger_path.exists():
+            try:
+                lgs = pd.read_csv(self.ledger_path, usecols=["league"])["league"].dropna().astype(str).str.strip()
+                found.update(x for x in lgs if x)
+            except Exception:
+                pass
+        return sorted(found)
 
-    def active_bets(self) -> pd.DataFrame:
-        """PENDING ledger rows inside the upcoming-gameweek window."""
+    def _load_ledger_upcoming(self) -> pd.DataFrame:
         if not self.ledger_path.exists():
-            print("[WARN] Ledger CSV not found.")
             return pd.DataFrame()
         df = pd.read_csv(self.ledger_path, parse_dates=["date"])
-        if 'odds_source' not in df.columns:
-            df['odds_source'] = ''
-        mask = (pd.to_datetime(df["date"]) >= self.window_start) & \
-               (pd.to_datetime(df["date"]) <= self.window_end) & \
-               (df["status"] == "PENDING")
+        for col, default in [("odds_source", ""), ("selection_side", ""), ("market_odds", np.nan)]:
+            if col not in df.columns:
+                df[col] = default
+        mask = (
+            (pd.to_datetime(df["date"]) >= self.window_start)
+            & (pd.to_datetime(df["date"]) <= self.window_end)
+            & (df["status"] == "PENDING")
+        )
         out = df[mask].copy()
-        print(f"[STEP 2] Loaded {len(out)} active pending bets for next Gameweek.")
+        if not out.empty:
+            out["home"] = out.apply(lambda r: canonical_team_name(r["home"], str(r["league"])), axis=1)
+            out["away"] = out.apply(lambda r: canonical_team_name(r["away"], str(r["league"])), axis=1)
+        return out
+
+    def active_bets(self, live_records: Optional[List[Dict[str, Any]]] = None) -> pd.DataFrame:
+        """
+        Return candidate upcoming bets for the next `window_days`:
+          * Generates candidates for ALL live upcoming La Liga & Ligue 1 fixtures across
+            high-signal markets (1X2 Home Win, 1X2 Away Win, Over 2.5, Under 2.5,
+            and calibrated Ligue 1 AH -0.75).
+          * Merges existing PENDING ledger rows (preserving any verified the-odds-api prices).
+        """
+        ledger_df = self._load_ledger_upcoming()
+        # Index existing ledger rows to preserve verified odds if already fetched
+        ledger_lookup: Dict[Tuple[str, str, str, str, str, str], Dict[str, Any]] = {}
+        for _, r in ledger_df.iterrows():
+            key = (
+                str(r["date"])[:10],
+                str(r["league"]),
+                str(r["home"]),
+                str(r["away"]),
+                str(r["market"]).strip(),
+                str(r.get("selection_side", "") or "").strip().upper(),
+            )
+            ledger_lookup[key] = r.to_dict()
+
+        rows: List[Dict[str, Any]] = []
+        seen_keys = set()
+
+        if self.use_live_fixtures:
+            live_df = fetch_upcoming_fixtures(
+                leagues=self.active_leagues,
+                window_days=self.window_days,
+                now=self.window_start,
+                live_records=live_records,
+            )
+            print(f"[STEP 2] Live fixtures discovered for next {self.window_days}d: {len(live_df)}")
+            for _, fx in live_df.iterrows():
+                lg = str(fx["league"])
+                h = str(fx["home"])
+                a = str(fx["away"])
+                dt = fx["date"]
+                dk = str(dt)[:10]
+
+                # Candidate markets for every live fixture
+                candidates = [
+                    ("1X2 Home Win", "HOME"),
+                    ("1X2 Away Win", "AWAY"),
+                    ("Over 2.5", ""),
+                    ("Under 2.5", ""),
+                ]
+                if lg == "Ligue 1":
+                    candidates.append(("AH -0.75", ""))  # side resolved numerically in pricing
+
+                for market, side in candidates:
+                    key = (dk, lg, h, a, market, side)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    existing = ledger_lookup.get(key)
+                    if existing:
+                        rows.append(existing)
+                    else:
+                        rows.append({
+                            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                            "date": dt,
+                            "home": h,
+                            "away": a,
+                            "league": lg,
+                            "market": market,
+                            "selection_side": side,
+                            "odds_source": "",
+                            "market_odds": np.nan,
+                            "stake": 0.0,
+                            "status": "PENDING",
+                            "result": "",
+                            "profit": np.nan,
+                        })
+
+        # Also include any upcoming ledger rows not covered by live feed
+        for key, rec in ledger_lookup.items():
+            if key not in seen_keys:
+                seen_keys.add(key)
+                rows.append(rec)
+
+        out = pd.DataFrame(rows) if rows else pd.DataFrame()
+        print(f"[STEP 2] Total candidate market rows to evaluate: {len(out)}")
         return out
 
 
 class QuantCalibrationAgent:
-    """Per-league MLE calibration + Dixon-Coles 8x8 pricing (delegates below)."""
+    """Per-league MLE calibration + Dixon-Coles pricing + Platt probability calibration."""
+
+    def __init__(self, team_model: Optional[TeamStrengthModel] = None) -> None:
+        self.team_model = team_model
 
     def calibrate_leagues(self, leagues: List[str]) -> Dict[str, Dict[str, Any]]:
-        """Fit (or prior-fallback) each league in strict isolation."""
         results: Dict[str, Dict[str, Any]] = {}
+        model = self.team_model or get_model()
         for lg in leagues:
-            mle = fit_league_mle_dynamic(league=lg)
+            mle = fit_league_mle_dynamic(league=lg, team_model=model)
             results[lg] = mle
-            print(f"[MLE] {lg}: μH={mle['mu_home']:.3f} μA={mle['mu_away']:.3f} "
-                  f"ρ={mle['rho']:.3f} status={mle['status']} n={mle['n']}")
+            print(
+                f"[MLE] {lg}: μH={mle['mu_home']:.3f} μA={mle['mu_away']:.3f} "
+                f"ρ={mle['rho']:.3f} status={mle['status']} n={mle['n']}"
+            )
         return results
 
-    def price_fixture(self, home: str, away: str, league: str, fixture_date=None) -> Dict[str, Any]:
-        """Full quantitative pricing for one fixture using its league's params."""
-        lh, la = estimate_match_lambdas(home, away, league, fixture_date=fixture_date)
+    def price_fixture(
+        self, home: str, away: str, league: str, fixture_date: Any = None
+    ) -> Dict[str, Any]:
+        model = self.team_model or get_model()
+        lh, la = estimate_match_lambdas(
+            home, away, league, team_model=model, fixture_date=fixture_date
+        )
         rho = get_league_params(league)[2]
         matrix = compute_dixon_coles_probs(lh, la, league=league)
-        return {"lh": lh, "la": la, "rho": float(rho),
-                "market_probs": calculate_market_probabilities(matrix),
-                "mle_status": get_league_mle_status(league)}
+        return {
+            "lh": lh,
+            "la": la,
+            "rho": float(rho),
+            "market_probs": calculate_market_probabilities(matrix),
+            "mle_status": get_league_mle_status(league),
+        }
 
 
 class RiskManagementAgent:
-    """Vig removal, +EV evaluation, and 0.25 Kelly sizing (delegates below)."""
-
     def __init__(self, kelly_fraction: float = 0.25, max_stake: float = 0.05) -> None:
         self.kelly_fraction = kelly_fraction
         self.max_stake = max_stake
 
-    def evaluate(self, p_model: float, odds: float) -> Dict[str, float]:
-        """Fair-value and stake sizing for one priced opportunity."""
+    def evaluate(self, p_calibrated: float, odds: float) -> Dict[str, float]:
         p_fair = remove_market_vig(odds)
-        ev = compute_ev(p_model, odds)
-        return {"p_fair": round(p_fair, 4),
-                "ev": float(ev),
-                "ev_percent": round(ev * 100, 2),
-                "edge": round(float(p_model) - p_fair, 4),
-                "stake_kelly": calculate_fractional_kelly(
-                    p_model, odds, fraction=self.kelly_fraction, max_stake=self.max_stake)}
+        ev = compute_ev(p_calibrated, odds)
+        return {
+            "p_fair": round(p_fair, 4),
+            "ev": float(ev),
+            "ev_percent": round(ev * 100.0, 2),
+            "edge": round(float(p_calibrated) - p_fair, 4),
+            "stake_kelly": calculate_fractional_kelly(
+                p_calibrated, odds, fraction=self.kelly_fraction, max_stake=self.max_stake
+            ),
+        }
 
 
 class ModelValidatorAgent:
-    """The Critic: audits priced opportunities and outputs the final consensus."""
+    """The Critic: enforces probability bounds, +EV gate, and calibrated confidence thresholds."""
 
-    def __init__(self, min_ev_pct: float = 2.0, model_tip_min: float = 0.58) -> None:
-        self.min_ev_pct = min_ev_pct
-        self.model_tip_min = model_tip_min
+    def __init__(
+        self,
+        min_ev_pct: float = 2.0,
+        model_tip_min: float = 0.58,
+        ah_ligue1_min: float = 0.62,
+    ) -> None:
+        self.min_ev_pct = float(min_ev_pct)
+        self.model_tip_min = float(model_tip_min)
+        self.ah_ligue1_min = float(ah_ligue1_min)
 
     def _audit_row(self, row: Dict[str, Any]) -> Tuple[str, str]:
-        """Return (verdict, reason) for one evaluated opportunity."""
         try:
-            p = float(row.get("p_model", float("nan")))
+            p = float(row.get("p_calibrated", row.get("p_model", float("nan"))))
             odds = float(row.get("market_odds", 0.0))
             ev_pct = float(row.get("ev_percent", float("nan")))
             lh = float(row.get("lh", 1.5))
             la = float(row.get("la", 1.2))
         except (TypeError, ValueError):
             return ("REJECTED", "unparseable numeric fields")
+
         if not (np.isfinite(p) and np.isfinite(odds)):
             return ("REJECTED", "non-finite model/odds fields")
         if not (0.01 <= p <= 0.99):
-            return ("REJECTED", f"model prob out of bounds ({p:.3f})")
+            return ("REJECTED", f"calibrated prob out of bounds ({p:.3f})")
         if not (odds > 1.0):
             return ("REJECTED", f"invalid odds ({odds})")
         if not (0.2 <= lh <= 5.0 and 0.2 <= la <= 5.0):
             return ("REJECTED", f"lambda anomaly ({lh}/{la})")
+
         price_type = str(row.get("price_type", "model"))
         if price_type == "verified":
             if not np.isfinite(ev_pct) or ev_pct < self.min_ev_pct:
                 return ("REJECTED", f"EV {ev_pct:+.1f}% below {self.min_ev_pct:.1f}% gate")
             return ("APPROVED", f"verified price, EV {ev_pct:+.1f}%")
-        if p < self.model_tip_min:
-            return ("REJECTED", f"model tip below {self.model_tip_min:.0%} confidence (p={p:.2f})")
+
+        # Broker Mode: enforce stricter threshold on Ligue 1 AH -0.75 (calibrated)
+        mk_low = str(row.get("market", "")).lower()
+        lg_low = _norm_league(row.get("league", ""))
+        min_conf = self.ah_ligue1_min if (lg_low == "ligue 1" and "ah" in mk_low) else self.model_tip_min
+        if p < min_conf:
+            return ("REJECTED", f"calibrated confidence p={p:.2f} below {min_conf:.0%} gate")
         m = float(row.get("min_odds") or 0.0)
-        return ("APPROVED", f"model tip (p={p:.1%}, find odds \u2265 {m:.2f})")
+        return ("APPROVED", f"model tip (p_cal={p:.1%}, find odds >= {m:.2f} [+6% margin])")
 
     def audit(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Split evaluated opportunities into (consensus, rejected).
-        Consensus = APPROVED rows only; rejected rows are preserved for audit.
-        """
         if df.empty:
             return df, df
         verdicts, reasons = [], []
@@ -646,35 +808,17 @@ class ModelValidatorAgent:
         df["reject_reason"] = reasons
         consensus = df[df["verdict"] == "APPROVED"].copy()
         rejected = df[df["verdict"] != "APPROVED"].copy()
-        for _, r in rejected.iterrows():
-            print(f"[CRITIC] REJECTED {r['league']} {r['home']} vs {r['away']} "
-                  f"({r['market']}) — {r['reject_reason']}")
         print(f"[CRITIC] Consensus: {len(consensus)} approved / {len(rejected)} rejected.")
         return consensus, rejected
 
 
-# ==============================================================================
-# 4. SETTLEMENT & PIPELINE EXECUTION
-# ==============================================================================
-
 class PortfolioExposureController:
-    """
-    Multi-bet exposure control: prevents over-allocation when many +EV bets
-    land on the same matchday (cross-bet correlation risk / simultaneous loss).
-
-    Method: after individual 0.25-Kelly stakes are set, group approved bets by
-    kickoff date and apply a per-matchday aggregate cap (fraction of bankroll).
-    When a matchday's summed stakes exceed the cap, ALL stakes in that group are
-    scaled down proportionally — preserving the model's relative-conviction
-    ordering rather than dropping the weakest picks outright.
-    """
-
-    def __init__(self, matchday_cap: float = 0.12, global_cap: float = 0.30,
-                 kelly_fraction: float = 0.25) -> None:
-        self.matchday_cap = float(matchday_cap)      # max total stake per kickoff date
-        self.global_cap = float(global_cap)          # max total stake across whole slate
+    def __init__(
+        self, matchday_cap: float = 0.12, global_cap: float = 0.30, kelly_fraction: float = 0.25
+    ) -> None:
+        self.matchday_cap = float(matchday_cap)
+        self.global_cap = float(global_cap)
         self.kelly_fraction = kelly_fraction
-        # Audit trail for reporting.
         self.scaled_matchdays = 0
         self.scaled_global = False
 
@@ -686,11 +830,6 @@ class PortfolioExposureController:
             return str(day)
 
     def apply(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Returns a copy of ``df`` with ``stake_kelly`` scaled down to satisfy the
-        per-matchday (then global) aggregate exposure caps. Fractional-Kelly
-        ordering is preserved; no stake is ever increased.
-        """
         if df is None or df.empty:
             return df
         out = df.copy()
@@ -698,9 +837,8 @@ class PortfolioExposureController:
         if raw_col is None:
             return out
         out["stake_kelly"] = pd.to_numeric(raw_col, errors="coerce").fillna(0.0)
-        out["stake_raw"] = out["stake_kelly"]  # pre-shrink record for audit
+        out["stake_raw"] = out["stake_kelly"]
 
-        # 1. Per-matchday aggregate cap (proportional shrink within each date group).
         self.scaled_matchdays = 0
         for day, grp in out.groupby(out["date"].map(self._group)):
             grp_sum = float(grp["stake_kelly"].sum())
@@ -710,7 +848,6 @@ class PortfolioExposureController:
                 out.loc[mask, "stake_kelly"] = out.loc[mask, "stake_kelly"] * factor
                 self.scaled_matchdays += 1
 
-        # 2. Global slate cap (proportional shrink across all approved bets).
         total = float(out["stake_kelly"].sum())
         if total > self.global_cap and total > 0:
             factor = self.global_cap / total
@@ -721,7 +858,6 @@ class PortfolioExposureController:
         return out
 
     def audit_note(self) -> str:
-        """Human-readable portfolio-control summary for the report."""
         parts = []
         if self.scaled_matchdays > 0:
             parts.append(f"matchday-cap applied x{self.scaled_matchdays}")
@@ -730,241 +866,358 @@ class PortfolioExposureController:
         return "، ".join(parts) if parts else "within caps"
 
 
-def run_settlement() -> Dict[str, Any]:
-    """
-    Executes settle_ledger_auto.py and returns execution metrics.
-    """
-    print('[STEP 1] Running Ledger Settlement Engine...')
-    settle_script = Path(__file__).parent / 'settle_ledger_auto.py'
-    if not settle_script.exists():
-        settle_script = Path('C:/Users/User/settle_ledger_auto.py')
-        
-    if settle_script.exists():
-        try:
-            res = subprocess.run([sys.executable, str(settle_script)], capture_output=True, text=True, timeout=30)
-            if res.returncode != 0:
-                print(f"[SETTLE ERROR] {res.stderr[:500]}")
-        except Exception as e:
-            print(f"[SETTLE EXCEPTION] {e}")
-            
-    summary_path = Path('ledger_settlement_summary.json')
-    if summary_path.exists():
-        try:
-            return json.loads(summary_path.read_text(encoding='utf-8'))
-        except Exception:
-            pass
-            
-    return {'settled_now': 0, 'total_profit_units': 0.0, 'cumulative_roi_percent': 0.0, 'pending_after': 0}
+# ==============================================================================
+# 6. PIPELINE ORCHESTRATION & LEDGER PERSISTENCE
+# ==============================================================================
+
+def run_settlement(
+    live_records: Optional[List[Dict[str, Any]]] = None,
+    use_live: bool = True,
+) -> Dict[str, Any]:
+    print("[STEP 1] Running Ledger Settlement & History Sync Engine...")
+    ledger_path = Path(LEDGER)
+    if not ledger_path.exists():
+        ledger_path = REPO_DIR / LEDGER
+    summary_path = ledger_path.parent / SUMMARY_FILE
+    try:
+        return settle_ledger(
+            ledger_path=ledger_path,
+            summary_path=summary_path,
+            live_records=live_records,
+            use_live=use_live,
+            sync_history=use_live,
+        )
+    except Exception as e:
+        print(f"[SETTLE EXCEPTION] {e}")
+        return {
+            "settled_now": 0,
+            "wins": 0,
+            "half_wins": 0,
+            "losses": 0,
+            "total_settled_all_time": 0,
+            "hit_rate_percent": 0.0,
+            "verified_settled_count": 0,
+            "verified_profit_units": 0.0,
+            "verified_roi_percent": None,
+            "pending_after": 0,
+        }
 
 
 def fetch_and_evaluate_opportunities(
-    data_agent: Optional["DataIngestionAgent"] = None,
-    quant_agent: Optional["QuantCalibrationAgent"] = None,
-    risk_agent: Optional["RiskManagementAgent"] = None,
+    data_agent: Optional[DataIngestionAgent] = None,
+    quant_agent: Optional[QuantCalibrationAgent] = None,
+    risk_agent: Optional[RiskManagementAgent] = None,
+    live_records: Optional[List[Dict[str, Any]]] = None,
 ) -> pd.DataFrame:
-    """
-    Evaluates upcoming fixtures with Dixon-Coles, Vig-removal, +EV, and Fractional Kelly sizing.
-    Agent-driven orchestration; all math delegates to the audited module functions.
-    Optional agents may be injected (constructed with defaults otherwise).
-    """
     data_agent = data_agent or DataIngestionAgent()
     quant_agent = quant_agent or QuantCalibrationAgent()
     risk_agent = risk_agent or RiskManagementAgent()
-    active_bets = data_agent.active_bets()
+    active_bets = data_agent.active_bets(live_records=live_records)
+    if active_bets.empty:
+        return pd.DataFrame()
 
-    upgraded_rows = []
-    for idx, row in active_bets.iterrows():
-        home = str(row['home'])
-        away = str(row['away'])
-        league = str(row.get('league', 'La Liga'))
-        market = str(row.get('market', 'Over 2.5'))
-        odds = float(row.get('market_odds') or float('nan'))
+    upgraded_rows: List[Dict[str, Any]] = []
+    for _, row in active_bets.iterrows():
+        league = str(row.get("league", "La Liga"))
+        home = canonical_team_name(row["home"], league)
+        away = canonical_team_name(row["away"], league)
+        market = str(row.get("market", "Over 2.5")).strip()
+        mk_low = market.lower()
+        odds = pd.to_numeric(row.get("market_odds"), errors="coerce")
 
-        # 1. Dixon-Coles pricing via Quant agent (strictly this league's params)
-        pricing = quant_agent.price_fixture(home, away, league, fixture_date=row['date'])
-        market_probs = pricing["market_probs"]
+        # 1. Dixon-Coles pricing using league MLE + causal time-decayed xG strengths
+        pricing = quant_agent.price_fixture(home, away, league, fixture_date=row["date"])
+        mp = pricing["market_probs"]
+        lh, la = pricing["lh"], pricing["la"]
 
-        # 2. Extract model probability based on market
-        if 'Over' in market:
-            p_model = market_probs['over_2.5']
-        elif 'AH' in market or 'Handicap' in market:
-            p_model = market_probs['ah_-0.75_away'] if ('Paris' in away or 'Real' in away) else market_probs['ah_-0.75_home']
-        elif 'BTTS' in market:
-            p_model = market_probs['btts_yes']
+        # 2. Extract model probability & unified explicit selection_side (NO string hacks!)
+        explicit_side = row.get("selection_side")
+        selection_side = ""
+
+        if "over" in mk_low and "2.5" in mk_low:
+            p_raw = mp["over_2.5"]
+        elif "under" in mk_low and "2.5" in mk_low:
+            p_raw = mp["under_2.5"]
+        elif "1x2" in mk_low or mk_low in ("home win", "away win", "draw"):
+            if "home" in mk_low or str(explicit_side).upper() == "HOME":
+                selection_side = "HOME"
+                p_raw = mp["home_win"]
+            elif "away" in mk_low or str(explicit_side).upper() == "AWAY":
+                selection_side = "AWAY"
+                p_raw = mp["away_win"]
+            elif "draw" in mk_low or str(explicit_side).upper() == "DRAW":
+                selection_side = "DRAW"
+                p_raw = mp["draw"]
+            else:
+                selection_side = determine_selection_side(
+                    home, away, league, fixture_date=row["date"], lh=lh, la=la
+                )
+                p_raw = mp["home_win"] if selection_side == "HOME" else mp["away_win"]
+        elif "ah" in mk_low or "handicap" in mk_low:
+            selection_side = determine_selection_side(
+                home, away, league, fixture_date=row["date"],
+                explicit_side=explicit_side, lh=lh, la=la,
+            )
+            p_raw = mp["ah_-0.75_home"] if selection_side == "HOME" else mp["ah_-0.75_away"]
+        elif "btts" in mk_low:
+            p_raw = mp["btts_yes"] if "no" not in mk_low else (1.0 - mp["btts_yes"])
         else:
-            p_model = float(row.get('pred_over', row.get('pred', 0.55)))
+            continue
 
-        if pd.isna(p_model) or p_model <= 0:
-            p_model = float(row.get('pred_over', row.get('pred', 0.58)))
+        # 3. Apply Platt probability calibration (removes Ligue 1 AH -0.75 overconfidence)
+        p_cal = calibrate_probability(p_raw, league, market)
 
-        # 3-4. Price & edge: use a REAL bookmaker price when the ledger has one
-        # (odds_source == 'the-odds-api'); otherwise emit a MODEL TIP with an
-        # explicit minimum price the bettor must find in the market.
-        odds_source = str(row.get('odds_source', '')).strip()
-        breakeven = round(1.0 / float(p_model), 2)
-        has_real = (odds_source == 'the-odds-api' and pd.notna(odds) and odds > 1.0)
+        # 4. Pricing path: verified bookmaker odds vs Broker Mode (+6% safety margin)
+        odds_source = str(row.get("odds_source", "") or "").strip()
+        has_real = odds_source == "the-odds-api" and pd.notna(odds) and float(odds) > 1.0
+        min_odds_req = compute_broker_min_odds(p_cal, BROKER_SAFETY_MARGIN)
+
         if has_real:
-            risk = risk_agent.evaluate(float(p_model), odds)
-            price_type = 'verified'; min_odds = None; use_odds = round(float(odds), 2)
-            p_fair = risk['p_fair']; ev_percent = risk['ev_percent']
-            edge = risk['edge']; stake_kelly = risk['stake_kelly']
+            risk = risk_agent.evaluate(p_cal, float(odds))
+            price_type = "verified"
+            min_odds = None
+            use_odds = round(float(odds), 2)
+            p_fair = risk["p_fair"]
+            ev_percent = risk["ev_percent"]
+            edge = risk["edge"]
+            stake_kelly = risk["stake_kelly"]
         else:
-            # Model tip: no verified market price -> neutral EV, confidence stake
-            # only, and min_odds is the break-even the bettor must beat.
-            price_type = 'model'; min_odds = breakeven; use_odds = breakeven
-            p_fair = float(p_model); ev_percent = 0.0; edge = 0.0
-            stake_kelly = 0.02 if p_model >= 0.58 else 0.0
+            price_type = "model"
+            min_odds = min_odds_req
+            use_odds = min_odds_req
+            p_fair = float(p_cal)
+            # Expected value IF bettor achieves >= min_odds (+6% target margin)
+            ev_percent = round(compute_ev(p_cal, min_odds_req) * 100.0, 2)
+            edge = 0.0
+            stake_kelly = 0.02 if p_cal >= 0.58 else 0.0
 
-        # Preserve or update values
         row_dict = row.to_dict()
-        row_dict['odds_source'] = odds_source
-        row_dict['price_type'] = price_type
-        row_dict['min_odds'] = min_odds
-        row_dict['p_model'] = round(float(p_model), 4)
-        row_dict['p_fair'] = float(p_fair)
-        row_dict['ev_percent'] = ev_percent
-        row_dict['edge'] = float(edge)
-        row_dict['stake_kelly'] = float(stake_kelly)
-        row_dict['market_odds'] = float(use_odds)
-        row_dict['lh'] = pricing['lh']
-        row_dict['la'] = pricing['la']
-        row_dict['rho'] = round(float(pricing['rho']), 4)
-        row_dict['mle_status'] = pricing['mle_status']
-
+        row_dict["home"] = home
+        row_dict["away"] = away
+        row_dict["league"] = league
+        row_dict["market"] = market
+        row_dict["selection_side"] = selection_side
+        row_dict["odds_source"] = odds_source
+        row_dict["price_type"] = price_type
+        row_dict["min_odds"] = min_odds
+        row_dict["p_model"] = round(float(p_raw), 4)
+        row_dict["p_calibrated"] = round(float(p_cal), 4)
+        row_dict["p_fair"] = float(p_fair)
+        row_dict["ev_percent"] = float(ev_percent)
+        row_dict["edge"] = float(edge)
+        row_dict["stake_kelly"] = float(stake_kelly)
+        row_dict["market_odds"] = float(use_odds)
+        row_dict["lh"] = lh
+        row_dict["la"] = la
+        row_dict["rho"] = round(float(pricing["rho"]), 4)
+        row_dict["mle_status"] = pricing["mle_status"]
         upgraded_rows.append(row_dict)
 
     return pd.DataFrame(upgraded_rows)
 
 
+def record_approved_bets_to_ledger(
+    df_opps: pd.DataFrame, ledger_path: Path = Path(LEDGER)
+) -> int:
+    """Persist newly approved live picks into paper_trading_ledger_2026.csv for future settlement."""
+    if df_opps is None or df_opps.empty:
+        return 0
+    if not ledger_path.exists():
+        ledger_path = REPO_DIR / LEDGER
+    if not ledger_path.exists():
+        return 0
+
+    df = pd.read_csv(ledger_path)
+    for col in ("selection_side", "odds_source", "p_calibrated", "min_odds"):
+        if col not in df.columns:
+            df[col] = ""
+
+    existing_keys = set()
+    for _, r in df.iterrows():
+        existing_keys.add((
+            str(r.get("date", ""))[:10],
+            str(r.get("league", "")),
+            canonical_team_name(r.get("home", ""), str(r.get("league", ""))),
+            canonical_team_name(r.get("away", ""), str(r.get("league", ""))),
+            str(r.get("market", "")).strip(),
+            str(r.get("selection_side", "") or "").strip().upper(),
+        ))
+
+    new_rows = []
+    for _, r in df_opps.iterrows():
+        key = (
+            str(r["date"])[:10],
+            str(r["league"]),
+            str(r["home"]),
+            str(r["away"]),
+            str(r["market"]).strip(),
+            str(r.get("selection_side", "") or "").strip().upper(),
+        )
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        is_verified = str(r.get("odds_source", "")).strip() == "the-odds-api"
+        new_rows.append({
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "date": str(r["date"])[:19],
+            "home": r["home"],
+            "away": r["away"],
+            "pred_over": r["p_calibrated"] if "over" in str(r["market"]).lower() else np.nan,
+            "edge": r.get("edge", 0.0),
+            "market_odds": r["market_odds"] if is_verified else np.nan,
+            "stake": r.get("stake_kelly", 0.02),
+            "status": "PENDING",
+            "result": "",
+            "profit": np.nan,
+            "league": r["league"],
+            "market": r["market"],
+            "pred": r["p_calibrated"],
+            "selection_side": r.get("selection_side", ""),
+            "odds_source": r.get("odds_source", ""),
+            "p_calibrated": r["p_calibrated"],
+            "min_odds": r.get("min_odds", np.nan),
+        })
+
+    if new_rows:
+        out = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+        out.to_csv(ledger_path, index=False)
+    return len(new_rows)
+
+
 # ==============================================================================
-# 5. TELEGRAM DISPATCH & NOTIFICATION FORMATTING
+# 7. TELEGRAM FORMATTING & DISPATCH (HONEST METRICS — NO FAKE 1.90 ROI)
 # ==============================================================================
 
-def format_telegram_report(summary: Dict[str, Any], df_opps: pd.DataFrame,
-                          critic_note: str = "") -> str:
-    """
-    Formats institutional-grade quantitative Telegram notification.
-    critic_note is appended only when the Critic audited the slate.
-    """
-    settled_now = summary.get('settled_now', 0)
-    profit = float(summary.get('total_profit_units', 0.0))
-    roi = float(summary.get('cumulative_roi_percent', 0.0))
-    pending = summary.get('pending_after', 0)
+def format_telegram_report(
+    summary: Dict[str, Any], df_opps: pd.DataFrame, critic_note: str = ""
+) -> str:
+    settled_now = int(summary.get("settled_now", 0))
+    total_settled = int(summary.get("total_settled_all_time", 0))
+    wins = int(summary.get("wins", 0))
+    half_wins = int(summary.get("half_wins", 0))
+    losses = int(summary.get("losses", 0))
+    hit_rate = float(summary.get("hit_rate_percent", 0.0))
+    pending = int(summary.get("pending_after", 0))
 
-    # Per-league calibration provenance (all calibrated leagues, not just consensus survivors).
+    v_count = int(summary.get("verified_settled_count", 0))
+    v_profit = float(summary.get("verified_profit_units", 0.0))
+    v_roi = summary.get("verified_roi_percent")
+    if v_count > 0 and v_roi is not None:
+        roi_line = f"• العائد المالي المؤكد (ROI | {v_count} صفقة): <b>{v_roi:+.2f}%</b> ({v_profit:+.3f} وحدة)"
+    else:
+        roi_line = "• العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>"
+
     _mle_bits = []
-    _seen_leagues = sorted(_FITTED_BY_LEAGUE.keys()) or \
-        sorted({str(r.get('league', '')) for _, r in df_opps.iterrows()} if not df_opps.empty else [])
-    for _lg in _seen_leagues:
+    _seen = sorted(_FITTED_BY_LEAGUE.keys())
+    for _lg in _seen:
         _p_h, _p_a, _p_r = get_league_params(_lg)
-        _mle_bits.append(f"{_lg.title() if _lg == _lg.lower() else _lg}: μH={_p_h:.2f} μA={_p_a:.2f} ρ={_p_r:.3f} ({get_league_mle_status(_lg)})")
+        _mle_bits.append(f"{_lg.title()}: μH={_p_h:.2f} μA={_p_a:.2f} ρ={_p_r:.3f} ({get_league_mle_status(_lg)})")
     _mle_txt = " | ".join(_mle_bits) if _mle_bits else "no active leagues"
     _critic_block = f"• تدقيق الناقد: <code>{critic_note}</code>\n" if critic_note else ""
 
-    msg = f"""📊 <b>تسوية الجولة وإحصائيات المحفظة</b>
-• الصفقات المسواة حديثاً: <b>{settled_now}</b>
-• صافي الأرباح: <b>{profit:+.3f} وحدة</b>
-• العائد التراكمي (ROI): <b>{roi:.2f}%</b>
-• إجمالي العمليات المعلقة: <b>{pending}</b>
+    msg = f"""📊 <b>تسوية الجولة وإحصائيات النتائج الحقيقية</b>
+• الصفقات المسوّاة حديثاً: <b>{settled_now}</b>
+• سجل النتائج الفعلية ({total_settled} صفقة): <b>{wins} فوز / {half_wins} نصف فوز / {losses} خسارة</b> (الدقة: <b>{hit_rate:.1f}%</b>)
+{roi_line}
+• العمليات المعلقة: <b>{pending}</b>
 • معايرة MLE: <code>{_mle_txt}</code>
 {_critic_block}
-🚀 <b>توصيات النموذج للجولة القادمة</b>
+🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>
 """
 
     if df_opps.empty:
-        msg += "<i>لا توجد توصيات مؤكدة لهذه الجولة.</i>\n"
+        msg += "<i>لا توجد فرص مستوفية لمعايير الثقة والقيمة لهذه الجولة.</i>\n"
     else:
         _any_model = False
         for _, r in df_opps.iterrows():
-            d_str = str(r['date'])[:10]
-            league = r['league']
-            home = r['home']
-            away = r['away']
-            market = r['market']
-            p_mod = float(r.get('p_model', 0.60)) * 100
-            stake = float(r.get('stake_kelly', r.get('stake', 0.02))) * 100
-            pt = str(r.get('price_type', 'model'))
-            if pt == 'verified':
-                odds = float(r.get('market_odds', 2.00))
-                ev = float(r.get('ev_percent', 0.0))
-                price_line = f"  🎯 <b>{market}</b> @ <b>{odds:.2f}</b> (سعر سوق مؤكد)\n"
+            d_str = str(r["date"])[:10]
+            league = r["league"]
+            home = r["home"]
+            away = r["away"]
+            market = r["market"]
+            side = str(r.get("selection_side", "") or "").strip()
+            side_tag = f" [{side}]" if side else ""
+            p_cal = float(r.get("p_calibrated", r.get("p_model", 0.58))) * 100.0
+            stake = float(r.get("stake_kelly", 0.02)) * 100.0
+            pt = str(r.get("price_type", "model"))
+            if pt == "verified":
+                odds = float(r["market_odds"])
+                ev = float(r.get("ev_percent", 0.0))
+                price_line = f"  🎯 <b>{market}{side_tag}</b> @ <b>{odds:.2f}</b> (سعر سوق مؤكد | EV <code>{ev:+.1f}%</code>)\n"
             else:
                 _any_model = True
-                ev = 0.0
-                mo = float(r.get('min_odds') or 0.0)
-                price_line = f"  🎯 <b>{market}</b> | احتمال النموذج <b>{p_mod:.0f}%</b> → ابحث عن سعر ≥ <b>{mo:.2f}</b>\n"
+                mo = float(r.get("min_odds") or 0.0)
+                price_line = (
+                    f"  🎯 <b>{market}{side_tag}</b> | الثقة المعايَرة <b>{p_cal:.1f}%</b> "
+                    f"→ ابحث عن سعر ≥ <b>{mo:.2f}</b> <i>(+6% أمان)</i>\n"
+                )
             msg += f"• <b>{d_str} | {league}</b>\n"
             msg += f"  ⚽ {home} vs {away}\n"
             msg += price_line
-            msg += f"  📈 EV: <code>{ev:+.1f}%</code> | حجم الرهان: <b>{stake:.2f}%</b>\n\n"
+            msg += f"  💼 حجم الرهان المقترح: <b>{stake:.2f}%</b>\n\n"
         if _any_model:
-            msg += ("⚠️ <i>الأسعار أعلاه تقديرات النموذج (لم تُتحقق من السوق)."
-                    " التزم بالحد الأدنى للسعر. لأسعار سوق مؤكدة ضبط مفتاح THE_ODDS_API_KEY.</i>\n")
+            msg += (
+                "⚠️ <i>وضع الوسيط (بدون THE_ODDS_API_KEY): الحد الأدنى للسعر يشمل هامش أمان +6% "
+                "فوق السعر العادل المعايَر. لا تراهن بأقل من الحد الأدنى المذكور.</i>\n"
+            )
     msg += "━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"⚡ <i>المحرك الكمي نشط | المصدر: paper_trading_ledger_2026.csv</i>"
+    msg += "⚡ <i>المحرك الكمي v2 (Time Decay + xG + Platt Calibration + Live Fixtures)</i>"
     return msg.strip()
 
 
-def send_telegram_alert(message: str) -> None:
-    """
-    Transmits alert via Telegram Bot API using environment secrets.
-    """
+def send_telegram_alert(message: str) -> bool:
     import requests
-    tg_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-    tg_chat = os.environ.get('TELEGRAM_CHAT_ID')
-    
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    tg_chat = os.environ.get("TELEGRAM_CHAT_ID")
     if tg_token and tg_chat:
         try:
             url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-            payload = {
-                'chat_id': tg_chat,
-                'text': message,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': True
-            }
-            r = requests.post(url, data=payload, timeout=15)
+            r = requests.post(
+                url,
+                data={
+                    "chat_id": tg_chat,
+                    "text": message,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
             if r.status_code == 200:
-                print(f"[TELEGRAM] Alert sent successfully (status: 200).")
-            else:
-                print(f"[TELEGRAM ERROR] status {r.status_code}: {r.text[:200]}")
+                print("[TELEGRAM] Alert sent successfully (status: 200).")
+                return True
+            print(f"[TELEGRAM ERROR] status {r.status_code}: {r.text[:200]}")
+            return False
         except Exception as e:
             print(f"[TELEGRAM EXCEPTION] {e}")
-    else:
-        print("[TELEGRAM] No TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID detected. Running in local/dry mode.")
+            return False
+    print("[TELEGRAM] No TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID detected. Running in local/dry mode.")
+    return False
 
 
 # ==============================================================================
-# 5b. DEDUP STATE — a fixture+market is dispatched ONCE, never re-sent weekly.
-# Persisted inside autoloop_last_run.json (already committed by the Git action),
-# so the "already sent" memory survives GitHub Actions runs.
+# 8. DEDUP & MAIN ENTRYPOINT
 # ==============================================================================
 
 def _fixture_key(r: Any) -> str:
-    """Unique key for one recommendation: date|home|away|market."""
-    try:
-        d = str(r['date'])[:10]
-    except Exception:
-        d = "?"
-    return f"{d}|{r['home']}|{r['away']}|{r['market']}"
+    d = str(r["date"])[:10]
+    side = str(r.get("selection_side", "") or "").strip().upper()
+    return f"{d}|{r['home']}|{r['away']}|{r['market']}|{side}"
 
 
 def _load_sent_keys() -> set:
-    """Return set of fixture keys already dispatched in previous runs."""
     try:
-        p = Path('autoloop_last_run.json')
+        p = Path("autoloop_last_run.json")
+        if not p.exists():
+            p = REPO_DIR / "autoloop_last_run.json"
         if p.exists():
-            data = json.loads(p.read_text(encoding='utf-8'))
-            return set(data.get('sent_fixture_keys', []))
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return set(data.get("sent_fixture_keys", []))
     except Exception:
         pass
     return set()
 
 
-def dedup_opportunities(df_opps: pd.DataFrame, sent_keys: set) -> tuple:
-    """
-    Split recommendations into NEW (not yet dispatched) vs ALREADY-SENT.
-    Returns (new_df, already_sent_keys, skipped_count).
-    """
+def dedup_opportunities(df_opps: pd.DataFrame, sent_keys: set) -> Tuple[pd.DataFrame, set, int]:
     if df_opps is None or df_opps.empty:
         return df_opps, set(), 0
     new_rows, new_keys, skipped = [], set(), 0
@@ -975,104 +1228,112 @@ def dedup_opportunities(df_opps: pd.DataFrame, sent_keys: set) -> tuple:
         else:
             new_rows.append(r.to_dict())
             new_keys.add(k)
-    if new_rows:
-        new_df = pd.DataFrame(new_rows, columns=df_opps.columns)
-    else:
-        new_df = df_opps.iloc[0:0]
+    new_df = pd.DataFrame(new_rows, columns=df_opps.columns) if new_rows else df_opps.iloc[0:0]
     return new_df, new_keys, skipped
 
 
-    # MAIN ENTRYPOINT
-    # ==============================================================================
-
-def main():
+def main() -> None:
     start_time = time.time()
-    print(f"[AUTOLOOP] Master Quantitative Loop Start: {datetime.now().isoformat()}")
+    print(f"[AUTOLOOP v2] Start: {datetime.now(timezone.utc).isoformat()}")
 
-    # Instantiate the four agents (wrappers only — math lives in module functions).
-    data_agent = DataIngestionAgent()
-    quant_agent = QuantCalibrationAgent()
+    # Fetch live matches once (shared across settlement, history sync, and upcoming fixtures)
+    live_records = fetch_all_live_matches(leagues=ACTIVE_LEAGUES, days_back=45, days_forward=10)
+    print(f"[LIVE FEED] Loaded {len(live_records)} unified match records.")
+
+    # 1. Settle completed bets + sync newly finished matches into historical datasets
+    summary = run_settlement(live_records=live_records, use_live=True)
+
+    # Refresh TeamStrengthModel after live history sync
+    team_model = get_model(refresh=True)
+    data_agent = DataIngestionAgent(leagues=ACTIVE_LEAGUES, use_live_fixtures=True)
+    quant_agent = QuantCalibrationAgent(team_model=team_model)
     risk_agent = RiskManagementAgent(kelly_fraction=0.25, max_stake=0.05)
-    critic_agent = ModelValidatorAgent(min_ev_pct=2.0)
+    critic_agent = ModelValidatorAgent(min_ev_pct=2.0, model_tip_min=0.58, ah_ligue1_min=0.62)
 
-    # 0. Per-league Dynamic MLE calibration via Quant agent (isolated fits; priors when history absent).
+    # 2. Per-league Dynamic MLE calibration (La Liga + Ligue 1)
     try:
         quant_agent.calibrate_leagues(data_agent.leagues())
     except Exception as e:
         print(f"[MLE] skipped ({e}); using priors.")
 
-    # 1. Settle historical bets
-    summary = run_settlement()
+    # 3. Evaluate live upcoming gameweek opportunities
+    df_evaluated = fetch_and_evaluate_opportunities(
+        data_agent, quant_agent, risk_agent, live_records=live_records
+    )
 
-    # 2. Evaluate next gameweek opportunities (Data -> Quant -> Risk)
-    df_evaluated = fetch_and_evaluate_opportunities(data_agent, quant_agent, risk_agent)
-
-    # 3. Critic audit -> final consensus drives all downstream outputs
+    # 4. Critic audit + portfolio exposure caps
     df_opps, df_rejected = critic_agent.audit(df_evaluated)
-
-    # 3b. Multi-bet portfolio exposure control (per-matchday + global caps).
-    portfolio_controller = PortfolioExposureController(
-        matchday_cap=0.12, global_cap=0.30, kelly_fraction=0.25)
+    portfolio_controller = PortfolioExposureController(matchday_cap=0.12, global_cap=0.30, kelly_fraction=0.25)
     df_opps = portfolio_controller.apply(df_opps)
     port_note = portfolio_controller.audit_note()
-    print(f"[PORTFOLIO] matchday-caps triggered={portfolio_controller.scaled_matchdays} "
-          f"global-cap={portfolio_controller.scaled_global} | {port_note}")
 
-    # 3c. Dedup: never re-dispatch a fixture+market already sent in an earlier run
-    # (fixes the weekly repeat of the same match). Only NEW recommendations are
-    # included in the report, and their keys are persisted for future runs.
+    # Keep at most the highest-confidence pick per fixture so we don't stack correlated markets
+    if not df_opps.empty:
+        df_opps = (
+            df_opps.sort_values(["p_calibrated", "ev_percent"], ascending=False)
+            .drop_duplicates(subset=["league", "home", "away"], keep="first")
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
+
+    # Record approved picks to ledger for automatic future settlement
+    recorded = record_approved_bets_to_ledger(df_opps)
+    if recorded:
+        print(f"[LEDGER] Recorded {recorded} new upcoming pick(s) for future settlement.")
+
+    # 5. Dedup notifications
     sent_keys = _load_sent_keys()
     df_opps, newly_sent_keys, skipped_sent = dedup_opportunities(df_opps, sent_keys)
     if skipped_sent:
         print(f"[DEDUP] skipped {skipped_sent} already-dispatched recommendation(s).")
 
-    critic_note = (f"{len(df_opps)} معتمدة / {len(df_rejected)} مرفوضة "
-                   + (f"/ {skipped_sent} مكررة (تم إرسالها سابقاً)" if skipped_sent else "") + " "
-                   f"(بوابة EV ≥ {critic_agent.min_ev_pct:.1f}% | تحكم المحفظة: {port_note})")
+    critic_note = (
+        f"{len(df_opps)} معتمدة / {len(df_rejected)} مرفوضة"
+        + (f" / {skipped_sent} مكررة" if skipped_sent else "")
+        + f" (هامش أمان +6% | المحفظة: {port_note})"
+    )
     report_text = format_telegram_report(summary, df_opps, critic_note=critic_note)
     print("\n--- [TELEGRAM PREVIEW] ---")
     print(report_text)
     print("--------------------------\n")
-    
-    # 4. Save artifacts for CI/CD & n8n
-    Path('telegram_last_report.txt').write_text(report_text, encoding='utf-8')
-    
+
+    sent_ok = send_telegram_alert(report_text)
+    persisted_keys = sorted(sent_keys | newly_sent_keys) if sent_ok else sorted(sent_keys)
+
+    Path("telegram_last_report.txt").write_text(report_text, encoding="utf-8")
     out_payload = {
-        'timestamp': datetime.utcnow().isoformat(),
-        'settlement': summary,
-        'opportunities_count': int(len(df_opps)),
-        'opportunities': df_opps.astype(str).to_dict(orient='records') if not df_opps.empty else [],
-        'rejected_count': int(len(df_rejected)),
-                'rejected': df_rejected.astype(str).to_dict(orient='records') if not df_rejected.empty else [],
-                'report_markdown': report_text,
-                'sent_fixture_keys': sorted(sent_keys | newly_sent_keys)
-            }
-    Path('autoloop_last_run.json').write_text(json.dumps(out_payload, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "settlement": summary,
+        "opportunities_count": int(len(df_opps)),
+        "opportunities": df_opps.astype(str).to_dict(orient="records") if not df_opps.empty else [],
+        "rejected_count": int(len(df_rejected)),
+        "rejected": df_rejected.astype(str).to_dict(orient="records") if not df_rejected.empty else [],
+        "report_markdown": report_text,
+        "telegram_dispatched": bool(sent_ok),
+        "sent_fixture_keys": persisted_keys,
+    }
+    Path("autoloop_last_run.json").write_text(
+        json.dumps(out_payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
     print("[SAVED] telegram_last_report.txt & autoloop_last_run.json updated.")
-    
-    # 5. Dispatch Telegram Notification
-    send_telegram_alert(report_text)
-    
-    elapsed = time.time() - start_time
-    print(f"[AUTOLOOP] Pipeline execution complete in {elapsed:.2f} seconds. (Sub-45s limit satisfied).")
+    print(f"[AUTOLOOP v2] Complete in {time.time() - start_time:.2f}s.")
 
 
 def _send_telegram_test() -> None:
-    """Explicit delivery test: sends a standalone marker so the user can verify
-    the bot reaches their chat, independent of any recommendation content."""
-    from datetime import datetime
-    msg = ("🧪 <b>اختبار الإرسال — Telegram Delivery Test</b>\n"
-           "إذا وصلت هذه الرسالة فهذا دليل أن البوت يعمل ويصل إلى دردشتك.\n"
-           f"• الزمن: <code>{datetime.now().isoformat()}</code>\n"
-           "• يليها تقرير تسوية الجولة القادمة (إن وُجدت توصيات مؤكدة الأسعار).")
+    msg = (
+        "🧪 <b>اختبار الإرسال — Telegram Delivery Test (v2)</b>\n"
+        "إذا وصلت هذه الرسالة فهذا دليل أن البوت يعمل ويصل إلى دردشتك.\n"
+        f"• الزمن: <code>{datetime.now(timezone.utc).isoformat()}</code>\n"
+        "• يليها تقرير تسوية الجولة القادمة."
+    )
     print("--- [TELEGRAM TEST] ---")
     print(msg)
     print("------------------------")
     send_telegram_alert(msg)
 
 
-if __name__ == '__main__':
-    if '--telegram-test' in sys.argv:
+if __name__ == "__main__":
+    if "--telegram-test" in sys.argv:
         _send_telegram_test()
     else:
         main()
