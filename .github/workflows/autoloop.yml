@@ -12,6 +12,9 @@ on:
         default: 'false'
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   autoloop:
     runs-on: ubuntu-latest
@@ -31,10 +34,14 @@ jobs:
           pip install -r requirements.txt
 
       - name: Fetch real odds (The Odds API)
-        if: ${{ secrets.THE_ODDS_API_KEY != '' }}
         env:
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
-        run: python fetch_odds.py
+        run: |
+          if [ -n "$THE_ODDS_API_KEY" ]; then
+            python fetch_odds.py
+          else
+            echo "THE_ODDS_API_KEY not set; skipping real odds fetch."
+          fi
 
       - name: Telegram delivery test (manual trigger)
         if: ${{ inputs.telegram_test == true }}
