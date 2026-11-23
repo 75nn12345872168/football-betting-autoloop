@@ -1,4 +1,4 @@
-name: Master Autoloop - LaLiga + Ligue1
+name: Master Autoloop - Big-5 Verified Engine
 
 on:
   schedule:
@@ -66,10 +66,10 @@ jobs:
           echo "=== Report ==="
           cat telegram_last_report.txt
 
-      - name: Commit & Push ledger and history updates
+      - name: Commit & Push ledger, history, and public web JSONs
         run: |
           git config --global user.name "hermes-bot"
           git config --global user.email "hermes@bot.local"
-          git add paper_trading_ledger_2026.csv ledger_settlement_summary.json la_liga_matches_2018_2026.csv live_matches_ligue1.csv telegram_last_report.txt autoloop_last_run.json || true
-          git diff --staged --quiet || git commit -m "auto: update ledger & settlement $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git add paper_trading_ledger_2026.csv ledger_settlement_summary.json la_liga_matches_2018_2026.csv live_matches_ligue1.csv data/historical_big5_odds.csv data/public/ telegram_last_report.txt autoloop_last_run.json || true
+          git diff --staged --quiet || git commit -m "auto: update ledger, settlement & public web json $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push || echo "No push needed or no remote"

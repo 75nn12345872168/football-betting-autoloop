@@ -38,6 +38,7 @@ except Exception:
     _SCIPY_AVAILABLE = False
 
 from live_data import (
+    BIG5_LEAGUES,
     REPO_DIR,
     canonical_team_name,
     fetch_all_live_matches,
@@ -52,6 +53,9 @@ from settle_ledger_auto import (
 )
 from team_strength import DEFAULT_XI, TeamStrengthModel, get_model, time_decay_weight
 
+PUBLIC_DATA_DIR = REPO_DIR / "data" / "public"
+BACKTEST_STATS_FILE = PUBLIC_DATA_DIR / "backtest_verified_stats.json"
+
 # Global baseline priors (used ONLY when a league has no usable history).
 _PRIOR_MU_HOME = 1.48
 _PRIOR_MU_AWAY = 1.18
@@ -63,17 +67,72 @@ BROKER_SAFETY_MARGIN = 1.06
 # Per-league fitted params: {normalized_league: {mu_home, mu_away, rho, status, n}}.
 _FITTED_BY_LEAGUE: Dict[str, Dict[str, Any]] = {}
 
-# Walk-forward out-of-sample Platt calibrators: {(league_lower, market_key): (a, b)}
-# where p_cal = sigmoid(a * logit(p_raw) + b).
-# Default prior Platt parameters for Ligue 1 AH -0.75 (empirically corrects the -5% tail
-# overconfidence found in 2,717-match walk-forward audit); also dynamically refitted
-# when walk-forward history is available.
+# Verified profitable (league, market) pairs from strict 2019-2026 historical odds backtest
+# (ROI > 0% against real bookmaker odds + positive Brier skill + n >= 15 bets).
+_DEFAULT_APPROVED_PAIRS: Tuple[Tuple[str, str], ...] = (
+    ("La Liga", "1X2 Home"),
+    ("La Liga", "Under 2.5"),
+    ("Serie A", "1X2 Away"),
+    ("Serie A", "Over 2.5"),
+)
+
 _DEFAULT_PLATT_PARAMS: Dict[Tuple[str, str], Tuple[float, float]] = {
     ("ligue 1", "ah_-0.75"): (0.82, -0.10),
 }
-_PLATT_CALIBRATORS: Dict[Tuple[str, str], Tuple[float, float]] = dict(_DEFAULT_PLATT_PARAMS)
 
-ACTIVE_LEAGUES: Tuple[str, ...] = ("La Liga", "Ligue 1")
+
+def normalize_market_key(market: Any) -> str:
+    mk = str(market or "").strip().lower()
+    if "ah" in mk or "handicap" in mk:
+        return "ah_-0.75"
+    if "over" in mk and "2.5" in mk:
+        return "over 2.5"
+    if "under" in mk and "2.5" in mk:
+        return "under 2.5"
+    if "1x2" in mk or mk in ("home win", "away win", "draw", "home", "away"):
+        if "home" in mk:
+            return "1x2 home"
+        if "away" in mk:
+            return "1x2 away"
+        if "draw" in mk:
+            return "1x2 draw"
+    return mk
+
+
+def load_verified_backtest_config(
+    stats_path: Path = BACKTEST_STATS_FILE,
+) -> Tuple[List[Tuple[str, str]], Dict[Tuple[str, str], Tuple[float, float]]]:
+    """
+    Load backtest-approved profitable (league, market) pairs and out-of-sample
+    Platt calibration parameters from `data/public/backtest_verified_stats.json`.
+    """
+    approved = list(_DEFAULT_APPROVED_PAIRS)
+    platt = dict(_DEFAULT_PLATT_PARAMS)
+    if stats_path.exists():
+        try:
+            raw = json.loads(stats_path.read_text(encoding="utf-8"))
+            pairs = raw.get("approved_production_pairs")
+            if isinstance(pairs, list) and pairs:
+                approved = [(str(lg), str(mk)) for lg, mk in pairs]
+            fplatt = raw.get("fitted_platt_params")
+            if isinstance(fplatt, dict):
+                for key_str, ab in fplatt.items():
+                    if "|" in key_str and isinstance(ab, (list, tuple)) and len(ab) == 2:
+                        lg_k, mk_k = key_str.split("|", 1)
+                        platt[(lg_k.strip().lower(), normalize_market_key(mk_k))] = (
+                            float(ab[0]),
+                            float(ab[1]),
+                        )
+        except Exception:
+            pass
+    return approved, platt
+
+
+APPROVED_PRODUCTION_PAIRS, _PLATT_CALIBRATORS = load_verified_backtest_config()
+APPROVED_PAIR_KEYS = {
+    (lg.strip().lower(), normalize_market_key(mk)) for lg, mk in APPROVED_PRODUCTION_PAIRS
+}
+ACTIVE_LEAGUES: Tuple[str, ...] = tuple(sorted({lg for lg, _ in APPROVED_PRODUCTION_PAIRS}))
 
 
 def _norm_league(league: Any) -> str:
@@ -443,10 +502,9 @@ def calibrate_probability(
     market: str,
     calibrators: Optional[Dict[Tuple[str, str], Tuple[float, float]]] = None,
 ) -> float:
-    """Apply Platt calibration for markets with known calibration bias (e.g. Ligue 1 AH -0.75)."""
+    """Apply Platt calibration for markets with empirically fitted parameters."""
     cal_map = calibrators if calibrators is not None else _PLATT_CALIBRATORS
-    mk_low = str(market or "").strip().lower()
-    mkey = "ah_-0.75" if ("ah" in mk_low or "handicap" in mk_low) else mk_low
+    mkey = normalize_market_key(market)
     params = cal_map.get((_norm_league(league), mkey))
     if not params:
         return round(float(np.clip(p_raw, 0.01, 0.99)), 4)
@@ -647,15 +705,18 @@ class DataIngestionAgent:
                 dt = fx["date"]
                 dk = str(dt)[:10]
 
-                # Candidate markets for every live fixture
-                candidates = [
+                # Candidate markets: ONLY backtest-approved profitable (league, market) pairs
+                all_candidates = [
                     ("1X2 Home Win", "HOME"),
                     ("1X2 Away Win", "AWAY"),
                     ("Over 2.5", ""),
                     ("Under 2.5", ""),
                 ]
-                if lg == "Ligue 1":
-                    candidates.append(("AH -0.75", ""))  # side resolved numerically in pricing
+                candidates = [
+                    (mk, sd)
+                    for mk, sd in all_candidates
+                    if (_norm_league(lg), normalize_market_key(mk)) in APPROVED_PAIR_KEYS
+                ]
 
                 for market, side in candidates:
                     key = (dk, lg, h, a, market, side)
@@ -749,17 +810,19 @@ class RiskManagementAgent:
 
 
 class ModelValidatorAgent:
-    """The Critic: enforces probability bounds, +EV gate, and calibrated confidence thresholds."""
+    """The Critic: enforces profitable-market whitelist, probability bounds, +EV gate, and confidence thresholds."""
 
     def __init__(
         self,
         min_ev_pct: float = 2.0,
         model_tip_min: float = 0.58,
         ah_ligue1_min: float = 0.62,
+        enforce_approved_markets: bool = True,
     ) -> None:
         self.min_ev_pct = float(min_ev_pct)
         self.model_tip_min = float(model_tip_min)
         self.ah_ligue1_min = float(ah_ligue1_min)
+        self.enforce_approved_markets = bool(enforce_approved_markets)
 
     def _audit_row(self, row: Dict[str, Any]) -> Tuple[str, str]:
         try:
@@ -770,6 +833,11 @@ class ModelValidatorAgent:
             la = float(row.get("la", 1.2))
         except (TypeError, ValueError):
             return ("REJECTED", "unparseable numeric fields")
+
+        if self.enforce_approved_markets:
+            pair_key = (_norm_league(row.get("league", "")), normalize_market_key(row.get("market", "")))
+            if pair_key not in APPROVED_PAIR_KEYS:
+                return ("REJECTED", f"market {pair_key} excluded by historical odds ROI filter")
 
         if not (np.isfinite(p) and np.isfinite(odds)):
             return ("REJECTED", "non-finite model/odds fields")
@@ -1232,13 +1300,127 @@ def dedup_opportunities(df_opps: pd.DataFrame, sent_keys: set) -> Tuple[pd.DataF
     return new_df, new_keys, skipped
 
 
+def export_public_json_bundle(
+    df_opps: pd.DataFrame,
+    summary: Dict[str, Any],
+    ledger_path: Path = Path(LEDGER),
+    public_dir: Path = PUBLIC_DATA_DIR,
+) -> Dict[str, Path]:
+    """
+    Export clean, structured public JSON artifacts to `data/public/` for
+    consumption by the global web platform (Next.js):
+      * predictions_latest.json
+      * performance_summary.json
+      (backtest_verified_stats.json is maintained by historical_odds_backtest.py)
+    """
+    public_dir.mkdir(parents=True, exist_ok=True)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 1. predictions_latest.json
+    preds_list: List[Dict[str, Any]] = []
+    if df_opps is not None and not df_opps.empty:
+        for _, r in df_opps.iterrows():
+            preds_list.append({
+                "date": str(r["date"])[:19],
+                "league": str(r["league"]),
+                "home": str(r["home"]),
+                "away": str(r["away"]),
+                "market": str(r["market"]),
+                "selection_side": str(r.get("selection_side", "") or ""),
+                "p_model": round(float(r.get("p_model", 0.0)), 4),
+                "p_calibrated": round(float(r.get("p_calibrated", r.get("p_model", 0.0))), 4),
+                "price_type": str(r.get("price_type", "model")),
+                "min_odds": None if pd.isna(r.get("min_odds")) else round(float(r["min_odds"]), 2),
+                "market_odds": round(float(r.get("market_odds", 0.0)), 2),
+                "ev_percent": round(float(r.get("ev_percent", 0.0)), 2),
+                "stake_kelly": round(float(r.get("stake_kelly", 0.0)), 4),
+                "expected_goals": {
+                    "home": round(float(r.get("lh", 0.0)), 3),
+                    "away": round(float(r.get("la", 0.0)), 3),
+                },
+            })
+
+    mle_snapshot = {
+        lg: {
+            "mu_home": round(float(v["mu_home"]), 3),
+            "mu_away": round(float(v["mu_away"]), 3),
+            "rho": round(float(v["rho"]), 3),
+            "status": str(v.get("status", "prior")),
+            "n": int(v.get("n", 0)),
+        }
+        for lg, v in sorted(_FITTED_BY_LEAGUE.items())
+    }
+
+    predictions_payload = {
+        "generated_at": now_iso,
+        "engine_version": "v3-big5-verified",
+        "min_confidence_pct": 58.0,
+        "safety_margin_pct": round((BROKER_SAFETY_MARGIN - 1.0) * 100.0, 1),
+        "approved_leagues": list(ACTIVE_LEAGUES),
+        "approved_pairs": [[lg, mk] for lg, mk in APPROVED_PRODUCTION_PAIRS],
+        "mle_calibration": mle_snapshot,
+        "count": len(preds_list),
+        "predictions": preds_list,
+    }
+    pred_path = public_dir / "predictions_latest.json"
+    pred_path.write_text(json.dumps(predictions_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 2. performance_summary.json
+    lpath = ledger_path if ledger_path.exists() else (REPO_DIR / LEDGER)
+    by_league: Dict[str, Dict[str, Any]] = {}
+    by_market: Dict[str, Dict[str, Any]] = {}
+    if lpath.exists():
+        try:
+            ldf = pd.read_csv(lpath)
+            done = ldf[ldf["status"].isin(["WIN", "HALF WIN", "LOSS"])]
+            for lg, g in done.groupby("league"):
+                w = int((g["status"] == "WIN").sum())
+                hw = int((g["status"] == "HALF WIN").sum())
+                l = int((g["status"] == "LOSS").sum())
+                tot = len(g)
+                by_league[str(lg)] = {
+                    "settled": tot,
+                    "wins": w,
+                    "half_wins": hw,
+                    "losses": l,
+                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
+                }
+            for mk, g in done.groupby("market"):
+                w = int((g["status"] == "WIN").sum())
+                hw = int((g["status"] == "HALF WIN").sum())
+                l = int((g["status"] == "LOSS").sum())
+                tot = len(g)
+                by_market[str(mk)] = {
+                    "settled": tot,
+                    "wins": w,
+                    "half_wins": hw,
+                    "losses": l,
+                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
+                }
+        except Exception:
+            pass
+
+    perf_payload = {
+        "generated_at": now_iso,
+        "engine_version": "v3-big5-verified",
+        "approved_production_pairs": [[lg, mk] for lg, mk in APPROVED_PRODUCTION_PAIRS],
+        "settlement": summary,
+        "breakdown_by_league": by_league,
+        "breakdown_by_market": by_market,
+    }
+    perf_path = public_dir / "performance_summary.json"
+    perf_path.write_text(json.dumps(perf_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"predictions_latest": pred_path, "performance_summary": perf_path}
+
+
 def main() -> None:
     start_time = time.time()
-    print(f"[AUTOLOOP v2] Start: {datetime.now(timezone.utc).isoformat()}")
+    print(f"[AUTOLOOP v3] Start: {datetime.now(timezone.utc).isoformat()} | Approved leagues: {ACTIVE_LEAGUES}")
 
-    # Fetch live matches once (shared across settlement, history sync, and upcoming fixtures)
-    live_records = fetch_all_live_matches(leagues=ACTIVE_LEAGUES, days_back=45, days_forward=10)
-    print(f"[LIVE FEED] Loaded {len(live_records)} unified match records.")
+    # Fetch live matches for Big-5 (keeps full Big-5 history & settlement up to date)
+    live_records = fetch_all_live_matches(leagues=BIG5_LEAGUES, days_back=45, days_forward=10)
+    print(f"[LIVE FEED] Loaded {len(live_records)} unified Big-5 match records.")
 
     # 1. Settle completed bets + sync newly finished matches into historical datasets
     summary = run_settlement(live_records=live_records, use_live=True)
@@ -1248,11 +1430,13 @@ def main() -> None:
     data_agent = DataIngestionAgent(leagues=ACTIVE_LEAGUES, use_live_fixtures=True)
     quant_agent = QuantCalibrationAgent(team_model=team_model)
     risk_agent = RiskManagementAgent(kelly_fraction=0.25, max_stake=0.05)
-    critic_agent = ModelValidatorAgent(min_ev_pct=2.0, model_tip_min=0.58, ah_ligue1_min=0.62)
+    critic_agent = ModelValidatorAgent(
+        min_ev_pct=2.0, model_tip_min=0.58, ah_ligue1_min=0.62, enforce_approved_markets=True
+    )
 
-    # 2. Per-league Dynamic MLE calibration (La Liga + Ligue 1)
+    # 2. Per-league Dynamic MLE calibration for active profitable leagues
     try:
-        quant_agent.calibrate_leagues(data_agent.leagues())
+        quant_agent.calibrate_leagues(sorted(set(ACTIVE_LEAGUES)))
     except Exception as e:
         print(f"[MLE] skipped ({e}); using priors.")
 
@@ -1281,18 +1465,22 @@ def main() -> None:
     if recorded:
         print(f"[LEDGER] Recorded {recorded} new upcoming pick(s) for future settlement.")
 
-    # 5. Dedup notifications
+    # Export full approved slate & verified performance to data/public/ (Next.js ready)
+    exported = export_public_json_bundle(df_opps, summary)
+    print(f"[PUBLIC EXPORT] Updated: {[str(p.name) for p in exported.values()]}")
+
+    # 5. Dedup Telegram notifications (so chat never gets duplicate alerts)
     sent_keys = _load_sent_keys()
-    df_opps, newly_sent_keys, skipped_sent = dedup_opportunities(df_opps, sent_keys)
+    df_telegram, newly_sent_keys, skipped_sent = dedup_opportunities(df_opps, sent_keys)
     if skipped_sent:
         print(f"[DEDUP] skipped {skipped_sent} already-dispatched recommendation(s).")
 
     critic_note = (
-        f"{len(df_opps)} معتمدة / {len(df_rejected)} مرفوضة"
+        f"{len(df_telegram)} معتمدة / {len(df_rejected)} مرفوضة"
         + (f" / {skipped_sent} مكررة" if skipped_sent else "")
         + f" (هامش أمان +6% | المحفظة: {port_note})"
     )
-    report_text = format_telegram_report(summary, df_opps, critic_note=critic_note)
+    report_text = format_telegram_report(summary, df_telegram, critic_note=critic_note)
     print("\n--- [TELEGRAM PREVIEW] ---")
     print(report_text)
     print("--------------------------\n")
@@ -1304,8 +1492,8 @@ def main() -> None:
     out_payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "settlement": summary,
-        "opportunities_count": int(len(df_opps)),
-        "opportunities": df_opps.astype(str).to_dict(orient="records") if not df_opps.empty else [],
+        "opportunities_count": int(len(df_telegram)),
+        "opportunities": df_telegram.astype(str).to_dict(orient="records") if not df_telegram.empty else [],
         "rejected_count": int(len(df_rejected)),
         "rejected": df_rejected.astype(str).to_dict(orient="records") if not df_rejected.empty else [],
         "report_markdown": report_text,
@@ -1316,7 +1504,7 @@ def main() -> None:
         json.dumps(out_payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
     print("[SAVED] telegram_last_report.txt & autoloop_last_run.json updated.")
-    print(f"[AUTOLOOP v2] Complete in {time.time() - start_time:.2f}s.")
+    print(f"[AUTOLOOP v3] Complete in {time.time() - start_time:.2f}s.")
 
 
 def _send_telegram_test() -> None:

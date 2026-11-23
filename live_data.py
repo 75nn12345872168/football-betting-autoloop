@@ -1,18 +1,19 @@
 """
-live_data.py — Live Fixtures, Completed Scores, History Sync & Canonical Team Mapping.
+live_data.py — Big-5 European Leagues Live Fixtures, Scores, History Sync & Canonical Team Mapping.
 
-Replaces the broken Understat JSON endpoint and frozen September CSV with a
-clean, resilient multi-source data layer:
-  1. ESPN public soccer scoreboard API (no API key required; day-by-day queries
-     for both upcoming fixtures and recent completed scores).
-  2. football-data.co.uk current-season CSVs (no API key required; full season
-     completed scores including HxG / AxG when available).
-  3. Optional football-data.org v4 API (when FOOTBALL_DATA_API_KEY is set).
-  4. Optional The Odds API /scores endpoint (when THE_ODDS_API_KEY is set).
-  5. Clean local JSON/CSV snapshots fallback when offline.
+Supports all 5 major European leagues:
+  * La Liga    (ESPN esp.1 | football-data.co.uk SP1.csv | football-data.org PD  | Odds API soccer_spain_la_liga)
+  * Ligue 1    (ESPN fra.1 | football-data.co.uk F1.csv  | football-data.org FL1 | Odds API soccer_france_ligue_one)
+  * EPL        (ESPN eng.1 | football-data.co.uk E0.csv  | football-data.org PL  | Odds API soccer_epl)
+  * Bundesliga (ESPN ger.1 | football-data.co.uk D1.csv  | football-data.org BL1 | Odds API soccer_germany_bundesliga)
+  * Serie A    (ESPN ita.1 | football-data.co.uk I1.csv  | football-data.org SA  | Odds API soccer_italy_serie_a)
 
-Also provides a single canonical team-name normalizer shared across
-autoloop_master.py, team_strength.py, fetch_odds.py, and settle_ledger_auto.py.
+Provides:
+  1. Multi-source live fixture & completed score fetching (zero-key ESPN + football-data.co.uk,
+     plus optional football-data.org v4 & The Odds API /scores).
+  2. Automatic history sync into local CSV datasets so TeamStrengthModel stays fresh.
+  3. Comprehensive canonical team-name mapping across Understat, ESPN, football-data.co.uk,
+     football-data.org, and The Odds API for all Big-5 clubs.
 """
 
 from __future__ import annotations
@@ -33,33 +34,48 @@ import requests
 
 REPO_DIR = Path(__file__).parent
 
+BIG5_LEAGUES: Tuple[str, ...] = ("La Liga", "Ligue 1", "EPL", "Bundesliga", "Serie A")
+
 ESPN_LEAGUE_CODES: Dict[str, str] = {
     "La Liga": "esp.1",
     "Ligue 1": "fra.1",
+    "EPL": "eng.1",
+    "Bundesliga": "ger.1",
+    "Serie A": "ita.1",
 }
 
 FD_ORG_COMPETITIONS: Dict[str, str] = {
     "La Liga": "PD",
     "Ligue 1": "FL1",
+    "EPL": "PL",
+    "Bundesliga": "BL1",
+    "Serie A": "SA",
 }
 
 FD_UK_LEAGUE_FILES: Dict[str, str] = {
     "La Liga": "SP1.csv",
     "Ligue 1": "F1.csv",
+    "EPL": "E0.csv",
+    "Bundesliga": "D1.csv",
+    "Serie A": "I1.csv",
 }
 
 ODDS_API_SPORTS: Dict[str, str] = {
     "La Liga": "soccer_spain_la_liga",
     "Ligue 1": "soccer_france_ligue_one",
+    "EPL": "soccer_epl",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "Serie A": "soccer_italy_serie_a",
 }
 
 LIVE_CACHE_FILE = REPO_DIR / "live_results_cache.json"
 LA_LIGA_HISTORY_CSV = REPO_DIR / "la_liga_matches_2018_2026.csv"
 LIGUE1_LIVE_CSV = REPO_DIR / "live_matches_ligue1.csv"
+BIG5_HISTORY_CSV = REPO_DIR / "data" / "historical_big5_odds.csv"
 
 
 # ==============================================================================
-# 1. CANONICAL TEAM NAME MAPPING (Understat / ESPN / Odds API / football-data)
+# 1. CANONICAL TEAM NAME MAPPING (Big-5 across Understat/ESPN/FD-UK/FD-Org/Odds)
 # ==============================================================================
 
 _CANONICAL_ALIASES: Dict[str, str] = {
@@ -67,6 +83,8 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "alaves": "Alaves",
     "deportivo alaves": "Alaves",
     "alaves sad": "Alaves",
+    "almeria": "Almeria",
+    "ud almeria": "Almeria",
     "athletic bilbao": "Athletic Club",
     "athletic club": "Athletic Club",
     "athletic club bilbao": "Athletic Club",
@@ -84,6 +102,9 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "celta de vigo": "Celta Vigo",
     "rc celta": "Celta Vigo",
     "rc celta de vigo": "Celta Vigo",
+    "deportivo": "Deportivo La Coruna",
+    "deportivo la coruna": "Deportivo La Coruna",
+    "la coruna": "Deportivo La Coruna",
     "eibar": "Eibar",
     "sd eibar": "Eibar",
     "elche": "Elche",
@@ -137,8 +158,7 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "valencia cf": "Valencia",
     "villarreal": "Villarreal",
     "villarreal cf": "Villarreal",
-    "almeria": "Almeria",
-    "ud almeria": "Almeria",
+
     # --- Ligue 1 ---
     "ajaccio": "Ajaccio",
     "ac ajaccio": "Ajaccio",
@@ -153,6 +173,8 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "brest": "Brest",
     "stade brestois": "Brest",
     "stade brestois 29": "Brest",
+    "caen": "Caen",
+    "sm caen": "Caen",
     "clermont": "Clermont Foot",
     "clermont foot": "Clermont Foot",
     "clermont foot 63": "Clermont Foot",
@@ -215,6 +237,233 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "toulouse fc": "Toulouse",
     "troyes": "Troyes",
     "estac troyes": "Troyes",
+
+    # --- EPL (Premier League) ---
+    "arsenal": "Arsenal",
+    "arsenal fc": "Arsenal",
+    "aston villa": "Aston Villa",
+    "aston villa fc": "Aston Villa",
+    "bournemouth": "Bournemouth",
+    "afc bournemouth": "Bournemouth",
+    "brentford": "Brentford",
+    "brentford fc": "Brentford",
+    "brighton": "Brighton",
+    "brighton and hove albion": "Brighton",
+    "brighton & hove albion": "Brighton",
+    "brighton hove albion": "Brighton",
+    "burnley": "Burnley",
+    "burnley fc": "Burnley",
+    "cardiff": "Cardiff",
+    "cardiff city": "Cardiff",
+    "chelsea": "Chelsea",
+    "chelsea fc": "Chelsea",
+    "coventry": "Coventry",
+    "coventry city": "Coventry",
+    "crystal palace": "Crystal Palace",
+    "crystal palace fc": "Crystal Palace",
+    "everton": "Everton",
+    "everton fc": "Everton",
+    "fulham": "Fulham",
+    "fulham fc": "Fulham",
+    "huddersfield": "Huddersfield",
+    "huddersfield town": "Huddersfield",
+    "ipswich": "Ipswich",
+    "ipswich town": "Ipswich",
+    "leeds": "Leeds",
+    "leeds united": "Leeds",
+    "leicester": "Leicester",
+    "leicester city": "Leicester",
+    "liverpool": "Liverpool",
+    "liverpool fc": "Liverpool",
+    "luton": "Luton",
+    "luton town": "Luton",
+    "man city": "Manchester City",
+    "manchester city": "Manchester City",
+    "manchester city fc": "Manchester City",
+    "man united": "Manchester United",
+    "man utd": "Manchester United",
+    "manchester united": "Manchester United",
+    "manchester united fc": "Manchester United",
+    "middlesbrough": "Middlesbrough",
+    "newcastle": "Newcastle United",
+    "newcastle united": "Newcastle United",
+    "newcastle utd": "Newcastle United",
+    "norwich": "Norwich",
+    "norwich city": "Norwich",
+    "nott'm forest": "Nottingham Forest",
+    "nottm forest": "Nottingham Forest",
+    "nottingham forest": "Nottingham Forest",
+    "sheffield united": "Sheffield United",
+    "sheffield utd": "Sheffield United",
+    "southampton": "Southampton",
+    "southampton fc": "Southampton",
+    "sunderland": "Sunderland",
+    "sunderland afc": "Sunderland",
+    "tottenham": "Tottenham",
+    "tottenham hotspur": "Tottenham",
+    "spurs": "Tottenham",
+    "watford": "Watford",
+    "watford fc": "Watford",
+    "west brom": "West Bromwich Albion",
+    "west bromwich albion": "West Bromwich Albion",
+    "west ham": "West Ham",
+    "west ham united": "West Ham",
+    "wolves": "Wolverhampton Wanderers",
+    "wolverhampton": "Wolverhampton Wanderers",
+    "wolverhampton wanderers": "Wolverhampton Wanderers",
+
+    # --- Bundesliga ---
+    "arminia bielefeld": "Arminia Bielefeld",
+    "bielefeld": "Arminia Bielefeld",
+    "augsburg": "Augsburg",
+    "fc augsburg": "Augsburg",
+    "bayer leverkusen": "Bayer Leverkusen",
+    "leverkusen": "Bayer Leverkusen",
+    "bayer 04 leverkusen": "Bayer Leverkusen",
+    "bayern munich": "Bayern Munich",
+    "bayern munchen": "Bayern Munich",
+    "fc bayern munich": "Bayern Munich",
+    "fc bayern munchen": "Bayern Munich",
+    "bochum": "Bochum",
+    "vfl bochum": "Bochum",
+    "vfl bochum 1848": "Bochum",
+    "borussia dortmund": "Borussia Dortmund",
+    "dortmund": "Borussia Dortmund",
+    "bvb": "Borussia Dortmund",
+    "borussia m gladbach": "Borussia M.Gladbach",
+    "borussia monchengladbach": "Borussia M.Gladbach",
+    "monchengladbach": "Borussia M.Gladbach",
+    "m'gladbach": "Borussia M.Gladbach",
+    "m gladbach": "Borussia M.Gladbach",
+    "gladbach": "Borussia M.Gladbach",
+    "darmstadt": "Darmstadt",
+    "sv darmstadt 98": "Darmstadt",
+    "eintracht frankfurt": "Eintracht Frankfurt",
+    "ein frankfurt": "Eintracht Frankfurt",
+    "frankfurt": "Eintracht Frankfurt",
+    "fc cologne": "FC Cologne",
+    "fc koln": "FC Cologne",
+    "1 fc koln": "FC Cologne",
+    "koln": "FC Cologne",
+    "cologne": "FC Cologne",
+    "fc heidenheim": "FC Heidenheim",
+    "heidenheim": "FC Heidenheim",
+    "1 fc heidenheim": "FC Heidenheim",
+    "1 fc heidenheim 1846": "FC Heidenheim",
+    "fortuna dusseldorf": "Fortuna Duesseldorf",
+    "fortuna duesseldorf": "Fortuna Duesseldorf",
+    "dusseldorf": "Fortuna Duesseldorf",
+    "freiburg": "Freiburg",
+    "sc freiburg": "Freiburg",
+    "greuther furth": "Greuther Fuerth",
+    "greuther fuerth": "Greuther Fuerth",
+    "spvgg greuther furth": "Greuther Fuerth",
+    "hamburg": "Hamburger SV",
+    "hamburger sv": "Hamburger SV",
+    "hannover": "Hannover 96",
+    "hannover 96": "Hannover 96",
+    "hertha": "Hertha Berlin",
+    "hertha berlin": "Hertha Berlin",
+    "hertha bsc": "Hertha Berlin",
+    "hoffenheim": "Hoffenheim",
+    "tsg hoffenheim": "Hoffenheim",
+    "tsg 1899 hoffenheim": "Hoffenheim",
+    "holstein kiel": "Holstein Kiel",
+    "kiel": "Holstein Kiel",
+    "mainz": "Mainz 05",
+    "mainz 05": "Mainz 05",
+    "1 fsv mainz 05": "Mainz 05",
+    "fsv mainz 05": "Mainz 05",
+    "nurnberg": "Nuernberg",
+    "nuernberg": "Nuernberg",
+    "1 fc nurnberg": "Nuernberg",
+    "paderborn": "Paderborn",
+    "sc paderborn 07": "Paderborn",
+    "rasenballsport leipzig": "RasenBallsport Leipzig",
+    "rb leipzig": "RasenBallsport Leipzig",
+    "leipzig": "RasenBallsport Leipzig",
+    "schalke": "Schalke 04",
+    "schalke 04": "Schalke 04",
+    "fc schalke 04": "Schalke 04",
+    "st pauli": "St. Pauli",
+    "fc st pauli": "St. Pauli",
+    "stuttgart": "VfB Stuttgart",
+    "vfb stuttgart": "VfB Stuttgart",
+    "union berlin": "Union Berlin",
+    "1 fc union berlin": "Union Berlin",
+    "fc union berlin": "Union Berlin",
+    "werder bremen": "Werder Bremen",
+    "sv werder bremen": "Werder Bremen",
+    "bremen": "Werder Bremen",
+    "wolfsburg": "Wolfsburg",
+    "vfl wolfsburg": "Wolfsburg",
+
+    # --- Serie A ---
+    "ac milan": "AC Milan",
+    "milan": "AC Milan",
+    "atalanta": "Atalanta",
+    "atalanta bc": "Atalanta",
+    "benevento": "Benevento",
+    "bologna": "Bologna",
+    "bologna fc": "Bologna",
+    "bologna fc 1909": "Bologna",
+    "brescia": "Brescia",
+    "cagliari": "Cagliari",
+    "cagliari calcio": "Cagliari",
+    "chievo": "Chievo",
+    "chievo verona": "Chievo",
+    "como": "Como",
+    "como 1907": "Como",
+    "cremonese": "Cremonese",
+    "us cremonese": "Cremonese",
+    "crotone": "Crotone",
+    "empoli": "Empoli",
+    "empoli fc": "Empoli",
+    "fiorentina": "Fiorentina",
+    "acf fiorentina": "Fiorentina",
+    "frosinone": "Frosinone",
+    "frosinone calcio": "Frosinone",
+    "genoa": "Genoa",
+    "genoa cfc": "Genoa",
+    "hellas verona": "Verona",
+    "verona": "Verona",
+    "inter": "Inter",
+    "inter milan": "Inter",
+    "internazionale": "Inter",
+    "fc internazionale milano": "Inter",
+    "juventus": "Juventus",
+    "juventus fc": "Juventus",
+    "lazio": "Lazio",
+    "ss lazio": "Lazio",
+    "lecce": "Lecce",
+    "us lecce": "Lecce",
+    "monza": "Monza",
+    "ac monza": "Monza",
+    "napoli": "Napoli",
+    "ssc napoli": "Napoli",
+    "palermo": "Palermo",
+    "parma": "Parma Calcio 1913",
+    "parma calcio 1913": "Parma Calcio 1913",
+    "pisa": "Pisa",
+    "pisa sc": "Pisa",
+    "roma": "Roma",
+    "as roma": "Roma",
+    "salernitana": "Salernitana",
+    "us salernitana 1919": "Salernitana",
+    "sampdoria": "Sampdoria",
+    "uc sampdoria": "Sampdoria",
+    "sassuolo": "Sassuolo",
+    "us sassuolo": "Sassuolo",
+    "spal": "SPAL 2013",
+    "spal 2013": "SPAL 2013",
+    "spezia": "Spezia",
+    "spezia calcio": "Spezia",
+    "torino": "Torino",
+    "torino fc": "Torino",
+    "udinese": "Udinese",
+    "udinese calcio": "Udinese",
+    "venezia": "Venezia",
+    "venezia fc": "Venezia",
 }
 
 
@@ -231,22 +480,24 @@ def canonical_team_name(name: Any, league: Optional[str] = None) -> str:
     if not raw:
         return ""
     norm = _strip_accents(raw).lower()
+    norm = norm.replace("&", " and ")
     norm = re.sub(r"[-_./]+", " ", norm)
     norm = re.sub(r"\s+", " ", norm).strip()
     if norm in _CANONICAL_ALIASES:
         return _CANONICAL_ALIASES[norm]
-    # Also try hyphenated form for clubs like Saint-Etienne
+    no_apos = norm.replace("'", "")
+    if no_apos in _CANONICAL_ALIASES:
+        return _CANONICAL_ALIASES[no_apos]
     hyph = norm.replace(" ", "-")
     if hyph in _CANONICAL_ALIASES:
         return _CANONICAL_ALIASES[hyph]
-    # Try stripping common leading/trailing club tokens
     stripped = re.sub(
-        r"^(fc|cf|rc|rcd|cd|ud|sd|ca|as|ac|aj|ogc|losc|olympique de|olympique|stade de|stade|club|deportivo)\s+",
+        r"^(1 |fc|cf|rc|rcd|cd|ud|sd|ca|as|ac|aj|ogc|losc|vfl|vfb|tsg|sc|sv|ss|us|uc|ssc|acf|afc|olympique de|olympique|stade de|stade|club|deportivo)\s+",
         "",
-        norm,
+        no_apos,
     )
     stripped = re.sub(
-        r"\s+(fc|cf|ud|sd|cd|sc|sco|hsc|osc|ac|sad|1901|29|63)$",
+        r"\s+(fc|cf|ud|sd|cd|sc|sco|hsc|osc|ac|afc|bc|cfc|sad|calcio|1901|1907|1909|1913|1919|1899|1848|1846|29|63|04|05|07|96|98)$",
         "",
         stripped,
     ).strip()
@@ -256,7 +507,6 @@ def canonical_team_name(name: Any, league: Optional[str] = None) -> str:
 
 
 def _current_season_code(ref_date: Optional[datetime] = None) -> str:
-    """Return football-data.co.uk 4-digit season code, e.g. '2627' for Nov 2026."""
     dt = ref_date or datetime.now(timezone.utc)
     start_year = dt.year if dt.month >= 7 else dt.year - 1
     return f"{start_year % 100:02d}{(start_year + 1) % 100:02d}"
@@ -283,10 +533,6 @@ def fetch_espn_matches(
     ref_date: Optional[datetime] = None,
     timeout: int = 12,
 ) -> List[Dict[str, Any]]:
-    """
-    Fetch recent completed scores + upcoming fixtures from ESPN's public
-    scoreboard API (no API key required). Uses single-day queries in parallel.
-    """
     code = ESPN_LEAGUE_CODES.get(league)
     if not code:
         return []
@@ -297,7 +543,7 @@ def fetch_espn_matches(
     ]
 
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; autoloop/2.0)"})
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; autoloop/3.0)"})
 
     def _get_day(day_str: str) -> List[Dict[str, Any]]:
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/scoreboard?dates={day_str}"
@@ -363,23 +609,24 @@ def fetch_espn_matches(
 
 def fetch_fd_uk_season_results(
     league: str,
+    season_code: Optional[str] = None,
     ref_date: Optional[datetime] = None,
     timeout: int = 15,
 ) -> List[Dict[str, Any]]:
     """
-    Fetch current-season completed results (including HxG / AxG when present)
-    from football-data.co.uk CSVs (no API key required).
+    Fetch completed results + real odds (+ HxG / AxG when present) from
+    football-data.co.uk for a given season_code (defaults to current season).
     """
     fname = FD_UK_LEAGUE_FILES.get(league)
     if not fname:
         return []
-    season_code = _current_season_code(ref_date)
-    url = f"https://www.football-data.co.uk/mmz4281/{season_code}/{fname}"
+    scode = season_code or _current_season_code(ref_date)
+    url = f"https://www.football-data.co.uk/mmz4281/{scode}/{fname}"
     try:
         r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200 or not r.text.strip():
             return []
-        df = pd.read_csv(io.StringIO(r.text))
+        df = pd.read_csv(io.StringIO(r.text), on_bad_lines="skip")
     except Exception:
         return []
 
@@ -407,6 +654,7 @@ def fetch_fd_uk_season_results(
             continue
         rows.append({
             "league": league,
+            "season_code": scode,
             "date": dt_str,
             "date_key": dt_str[:10],
             "home": home,
@@ -417,6 +665,28 @@ def fetch_fd_uk_season_results(
             "goals_away": int(ga),
             "xG_home": _safe_float(row.get("HxG")),
             "xG_away": _safe_float(row.get("AxG")),
+            # Opening / market odds
+            "PSH": _safe_float(row.get("PSH")),
+            "PSD": _safe_float(row.get("PSD")),
+            "PSA": _safe_float(row.get("PSA")),
+            "MaxH": _safe_float(row.get("MaxH") if pd.notna(row.get("MaxH")) else row.get("BbMxH")),
+            "MaxD": _safe_float(row.get("MaxD") if pd.notna(row.get("MaxD")) else row.get("BbMxD")),
+            "MaxA": _safe_float(row.get("MaxA") if pd.notna(row.get("MaxA")) else row.get("BbMxA")),
+            "AvgH": _safe_float(row.get("AvgH") if pd.notna(row.get("AvgH")) else row.get("BbAvH")),
+            "AvgD": _safe_float(row.get("AvgD") if pd.notna(row.get("AvgD")) else row.get("BbAvD")),
+            "AvgA": _safe_float(row.get("AvgA") if pd.notna(row.get("AvgA")) else row.get("BbAvA")),
+            "P_over25": _safe_float(row.get("P>2.5")),
+            "P_under25": _safe_float(row.get("P<2.5")),
+            "Max_over25": _safe_float(row.get("Max>2.5") if pd.notna(row.get("Max>2.5")) else row.get("BbMx>2.5")),
+            "Max_under25": _safe_float(row.get("Max<2.5") if pd.notna(row.get("Max<2.5")) else row.get("BbMx<2.5")),
+            "Avg_over25": _safe_float(row.get("Avg>2.5") if pd.notna(row.get("Avg>2.5")) else row.get("BbAv>2.5")),
+            "Avg_under25": _safe_float(row.get("Avg<2.5") if pd.notna(row.get("Avg<2.5")) else row.get("BbAv<2.5")),
+            # Pinnacle closing odds (true CLV benchmark)
+            "PSCH": _safe_float(row.get("PSCH")),
+            "PSCD": _safe_float(row.get("PSCD")),
+            "PSCA": _safe_float(row.get("PSCA")),
+            "PC_over25": _safe_float(row.get("PC>2.5")),
+            "PC_under25": _safe_float(row.get("PC<2.5")),
             "source": "football-data.co.uk",
         })
     return sorted(rows, key=lambda x: x["date"])
@@ -427,7 +697,6 @@ def fetch_football_data_org_matches(
     api_key: Optional[str] = None,
     timeout: int = 15,
 ) -> List[Dict[str, Any]]:
-    """Optional fetcher using football-data.org v4 API when FOOTBALL_DATA_API_KEY is set."""
     key = (api_key or os.environ.get("FOOTBALL_DATA_API_KEY", "")).strip()
     comp = FD_ORG_COMPETITIONS.get(league)
     if not key or not comp:
@@ -478,7 +747,6 @@ def fetch_odds_api_scores(
     days_from: int = 3,
     timeout: int = 15,
 ) -> List[Dict[str, Any]]:
-    """Optional fetcher using The Odds API /scores when THE_ODDS_API_KEY is set."""
     key = (api_key or os.environ.get("THE_ODDS_API_KEY", "")).strip()
     sport = ODDS_API_SPORTS.get(league)
     if not key or not sport:
@@ -533,10 +801,6 @@ def fetch_odds_api_scores(
 # ==============================================================================
 
 def _merge_matches(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Merge match records across sources by (league, home, away, nearby date).
-    Prefers completed records with xG over records without xG.
-    """
     merged: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
     for rec in records:
         key = (rec["league"], rec["date_key"], rec["home"], rec["away"])
@@ -544,50 +808,45 @@ def _merge_matches(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if existing is None:
             merged[key] = dict(rec)
             continue
-        # Prefer completed score if newly available
         if rec.get("completed") and not existing.get("completed"):
             existing["completed"] = True
             existing["goals_home"] = rec.get("goals_home")
             existing["goals_away"] = rec.get("goals_away")
             existing["state"] = "post"
-        # Preserve xG whenever any source provides it
-        if existing.get("xG_home") is None and rec.get("xG_home") is not None:
-            existing["xG_home"] = rec["xG_home"]
-        if existing.get("xG_away") is None and rec.get("xG_away") is not None:
-            existing["xG_away"] = rec["xG_away"]
+        for field in (
+            "xG_home", "xG_away", "PSH", "PSD", "PSA", "MaxH", "MaxD", "MaxA",
+            "AvgH", "AvgD", "AvgA", "P_over25", "P_under25", "Max_over25", "Max_under25",
+            "Avg_over25", "Avg_under25", "PSCH", "PSCD", "PSCA", "PC_over25", "PC_under25",
+        ):
+            if existing.get(field) is None and rec.get(field) is not None:
+                existing[field] = rec[field]
     return sorted(merged.values(), key=lambda x: x["date"])
 
 
 def fetch_all_live_matches(
-    leagues: Tuple[str, ...] = ("La Liga", "Ligue 1"),
+    leagues: Tuple[str, ...] = BIG5_LEAGUES,
     days_back: int = 14,
     days_forward: int = 10,
     use_cache_hours: float = 3.0,
     cache_path: Path = LIVE_CACHE_FILE,
 ) -> List[Dict[str, Any]]:
-    """
-    Fetch unified recent scores + upcoming fixtures across all configured live
-    sources with disk caching (default 3h TTL) and graceful offline fallback.
-    """
     if use_cache_hours > 0 and cache_path.exists():
         age_h = (time.time() - cache_path.stat().st_mtime) / 3600.0
         if age_h < use_cache_hours:
             try:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
                 if isinstance(cached, list) and cached:
-                    return [m for m in cached if m.get("league") in leagues]
+                    cached_leagues = {m.get("league") for m in cached}
+                    if set(leagues).issubset(cached_leagues):
+                        return [m for m in cached if m.get("league") in leagues]
             except Exception:
                 pass
 
     all_records: List[Dict[str, Any]] = []
     for lg in leagues:
-        # 1. Optional football-data.org (full fixtures + scores)
         all_records.extend(fetch_football_data_org_matches(lg))
-        # 2. Free full-season scores + HxG/AxG from football-data.co.uk
         all_records.extend(fetch_fd_uk_season_results(lg))
-        # 3. Free ESPN scoreboard (upcoming fixtures + latest scores)
         all_records.extend(fetch_espn_matches(lg, days_back=days_back, days_forward=days_forward))
-        # 4. Optional The Odds API /scores
         all_records.extend(fetch_odds_api_scores(lg))
 
     merged = _merge_matches(all_records)
@@ -598,7 +857,6 @@ def fetch_all_live_matches(
             pass
         return merged
 
-    # Offline fallback: return stale cache if present
     if cache_path.exists():
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -610,15 +868,11 @@ def fetch_all_live_matches(
 
 
 def fetch_upcoming_fixtures(
-    leagues: Tuple[str, ...] = ("La Liga", "Ligue 1"),
+    leagues: Tuple[str, ...] = BIG5_LEAGUES,
     window_days: int = 8,
     now: Optional[pd.Timestamp] = None,
     live_records: Optional[List[Dict[str, Any]]] = None,
 ) -> pd.DataFrame:
-    """
-    Return upcoming (unplayed) fixtures inside [now, now + window_days] as a
-    clean DataFrame with canonical team names: [date, league, home, away, source].
-    """
     ref = (now or pd.Timestamp.now()).normalize()
     end = ref + pd.Timedelta(days=window_days)
     records = live_records if live_records is not None else fetch_all_live_matches(
@@ -657,39 +911,85 @@ def sync_live_history(
     live_records: Optional[List[Dict[str, Any]]] = None,
     la_csv: Path = LA_LIGA_HISTORY_CSV,
     ligue1_csv: Path = LIGUE1_LIVE_CSV,
+    big5_csv: Path = BIG5_HISTORY_CSV,
 ) -> Dict[str, int]:
     """
-    Append newly completed matches from live feeds into local historical CSVs
-    (deduplicated by date_key + home + away), keeping TeamStrengthModel fresh.
+    Append newly completed Big-5 matches into local historical CSVs (deduplicated).
+    Updates `data/historical_big5_odds.csv` (all 5 leagues) as well as legacy La Liga/Ligue 1 CSVs.
     """
     records = live_records if live_records is not None else fetch_all_live_matches()
     completed = [
         m for m in records
         if m.get("completed") and m.get("goals_home") is not None and m.get("goals_away") is not None
     ]
-    added_counts = {"La Liga": 0, "Ligue 1": 0}
+    added_counts: Dict[str, int] = {lg: 0 for lg in BIG5_LEAGUES}
 
-    # --- 1. Update La Liga CSV ---
+    # --- 1. Sync unified Big-5 historical CSV ---
+    if completed and big5_csv.exists():
+        bdf = pd.read_csv(big5_csv)
+        existing_keys = set()
+        for _, r in bdf.iterrows():
+            lg = str(r.get("league", ""))
+            existing_keys.add((
+                lg,
+                str(r.get("date", ""))[:10],
+                canonical_team_name(r.get("home", ""), lg),
+                canonical_team_name(r.get("away", ""), lg),
+            ))
+        new_rows = []
+        for m in completed:
+            lg = str(m.get("league", ""))
+            if lg not in BIG5_LEAGUES:
+                continue
+            key = (lg, m["date_key"], m["home"], m["away"])
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            dt = pd.to_datetime(m["date"])
+            sy = dt.year if dt.month >= 7 else dt.year - 1
+            row_d = {
+                "league": lg,
+                "season": sy,
+                "date": m["date"],
+                "home": m["home"],
+                "away": m["away"],
+                "goals_home": int(m["goals_home"]),
+                "goals_away": int(m["goals_away"]),
+                "xG_home": m.get("xG_home"),
+                "xG_away": m.get("xG_away"),
+            }
+            for col in (
+                "PSH", "PSD", "PSA", "MaxH", "MaxD", "MaxA", "AvgH", "AvgD", "AvgA",
+                "P_over25", "P_under25", "Max_over25", "Max_under25", "Avg_over25", "Avg_under25",
+                "PSCH", "PSCD", "PSCA", "PC_over25", "PC_under25",
+            ):
+                row_d[col] = m.get(col)
+            new_rows.append(row_d)
+            added_counts[lg] = added_counts.get(lg, 0) + 1
+        if new_rows:
+            out_bdf = pd.concat([bdf, pd.DataFrame(new_rows)], ignore_index=True)
+            out_bdf.sort_values(["date", "league"]).to_csv(big5_csv, index=False)
+
+    # --- 2. Keep legacy La Liga CSV in sync ---
     la_done = [m for m in completed if m.get("league") == "La Liga"]
     if la_done and la_csv.exists():
         df = pd.read_csv(la_csv)
-        existing_keys = set()
-        for _, r in df.iterrows():
-            dk = str(r.get("date", ""))[:10]
-            h = canonical_team_name(r.get("home", ""), "La Liga")
-            a = canonical_team_name(r.get("away", ""), "La Liga")
-            existing_keys.add((dk, h, a))
+        existing_keys = {
+            (str(r.get("date", ""))[:10], canonical_team_name(r.get("home", ""), "La Liga"), canonical_team_name(r.get("away", ""), "La Liga"))
+            for _, r in df.iterrows()
+        }
         new_rows = []
         for m in la_done:
             key = (m["date_key"], m["home"], m["away"])
             if key in existing_keys:
                 continue
+            existing_keys.add(key)
             dt = pd.to_datetime(m["date"])
-            season_yr = dt.year if dt.month >= 7 else dt.year - 1
+            sy = dt.year if dt.month >= 7 else dt.year - 1
             gh, ga = int(m["goals_home"]), int(m["goals_away"])
             new_rows.append({
-                "season": season_yr,
-                "season_label": f"{season_yr}/{season_yr + 1}",
+                "season": sy,
+                "season_label": f"{sy}/{sy + 1}",
                 "date": m["date"],
                 "isResult": True,
                 "home": m["home"],
@@ -704,32 +1004,24 @@ def sync_live_history(
                 "btts": 1 if (gh > 0 and ga > 0) else 0,
                 "over25": 1 if (gh + ga) > 2.5 else 0,
             })
-            existing_keys.add(key)
         if new_rows:
-            out_df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-            out_df.to_csv(la_csv, index=False)
-            added_counts["La Liga"] = len(new_rows)
+            pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True).to_csv(la_csv, index=False)
 
-    # --- 2. Update Ligue 1 live CSV (read alongside raw_Ligue1_8seasons.json) ---
+    # --- 3. Keep legacy Ligue 1 live CSV in sync ---
     l1_done = [m for m in completed if m.get("league") == "Ligue 1"]
     if l1_done:
         cols = ["date", "home", "away", "goals_home", "goals_away", "xG_home", "xG_away", "source"]
-        if ligue1_csv.exists():
-            df1 = pd.read_csv(ligue1_csv)
-        else:
-            df1 = pd.DataFrame(columns=cols)
-        existing_keys = set()
-        for _, r in df1.iterrows():
-            existing_keys.add((
-                str(r.get("date", ""))[:10],
-                canonical_team_name(r.get("home", ""), "Ligue 1"),
-                canonical_team_name(r.get("away", ""), "Ligue 1"),
-            ))
+        df1 = pd.read_csv(ligue1_csv) if ligue1_csv.exists() else pd.DataFrame(columns=cols)
+        existing_keys = {
+            (str(r.get("date", ""))[:10], canonical_team_name(r.get("home", ""), "Ligue 1"), canonical_team_name(r.get("away", ""), "Ligue 1"))
+            for _, r in df1.iterrows()
+        }
         new_rows = []
         for m in l1_done:
             key = (m["date_key"], m["home"], m["away"])
             if key in existing_keys:
                 continue
+            existing_keys.add(key)
             new_rows.append({
                 "date": m["date"],
                 "home": m["home"],
@@ -740,10 +1032,7 @@ def sync_live_history(
                 "xG_away": m.get("xG_away") if m.get("xG_away") is not None else "",
                 "source": m.get("source", "live"),
             })
-            existing_keys.add(key)
         if new_rows:
-            out_df1 = pd.concat([df1, pd.DataFrame(new_rows)], ignore_index=True)
-            out_df1.sort_values("date").to_csv(ligue1_csv, index=False)
-            added_counts["Ligue 1"] = len(new_rows)
+            pd.concat([df1, pd.DataFrame(new_rows)], ignore_index=True).sort_values("date").to_csv(ligue1_csv, index=False)
 
     return added_counts

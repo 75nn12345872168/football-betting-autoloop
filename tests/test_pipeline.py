@@ -344,8 +344,8 @@ class TestBrokerMinOddsCalibrationAndOddsFetch(unittest.TestCase):
         p_raw = 0.70
         p_cal = am.calibrate_probability(p_raw, "Ligue 1", "AH -0.75")
         self.assertLess(p_cal, p_raw)
-        # Uncalibrated market stays unchanged
-        self.assertEqual(am.calibrate_probability(0.62, "La Liga", "Over 2.5"), 0.62)
+        # Uncalibrated market without Platt entry stays unchanged
+        self.assertEqual(am.calibrate_probability(0.62, "Unknown League", "Over 2.5"), 0.62)
 
     def test_telegram_report_hides_fake_roi_when_unverified(self):
         summary = {
@@ -420,6 +420,103 @@ class TestBrokerMinOddsCalibrationAndOddsFetch(unittest.TestCase):
         self.assertEqual(m_l1["status"], "fitted")
         lh, la = am.estimate_match_lambdas("Barcelona", "Sevilla", "La Liga", team_model=model)
         self.assertTrue(0.3 <= lh <= 5.0 and 0.3 <= la <= 5.0)
+
+
+class TestBig5ExpansionEVAndPublicExports(unittest.TestCase):
+    """(f) Big-5 league coverage, profitable-market EV gating, and Next.js data/public JSON exports."""
+
+    def test_big5_canonical_names_and_strengths_loaded(self):
+        self.assertEqual(ld.canonical_team_name("Man City", "EPL"), "Manchester City")
+        self.assertEqual(ld.canonical_team_name("Nott'm Forest", "EPL"), "Nottingham Forest")
+        self.assertEqual(ld.canonical_team_name("Ein Frankfurt", "Bundesliga"), "Eintracht Frankfurt")
+        self.assertEqual(ld.canonical_team_name("M'gladbach", "Bundesliga"), "Borussia M.Gladbach")
+        self.assertEqual(ld.canonical_team_name("Hellas Verona", "Serie A"), "Verona")
+        self.assertEqual(ld.canonical_team_name("Inter Milan", "Serie A"), "Inter")
+
+        model = TeamStrengthModel()
+        for lg in ld.BIG5_LEAGUES:
+            df = model.get_league_match_dataframe(lg)
+            self.assertGreater(len(df), 2000, f"Expected >2000 matches for {lg}, got {len(df)}")
+            mu_h, mu_a, _ = model.league_baselines(lg)
+            self.assertTrue(0.8 <= mu_h <= 2.5 and 0.6 <= mu_a <= 2.2)
+
+    def test_ev_kelly_and_profitable_market_whitelist(self):
+        # EV = p * odds - 1
+        self.assertAlmostEqual(am.compute_ev(0.60, 1.80), 0.08, places=6)
+        self.assertGreater(am.calculate_fractional_kelly(0.60, 1.80, fraction=0.25, max_stake=0.05), 0.0)
+        self.assertEqual(am.calculate_fractional_kelly(0.50, 1.90), 0.0)
+
+        critic = am.ModelValidatorAgent(min_ev_pct=2.0, model_tip_min=0.58, enforce_approved_markets=True)
+        df_test = pd.DataFrame([
+            {
+                "league": "La Liga", "home": "Real Madrid", "away": "Alaves",
+                "market": "1X2 Home Win", "p_calibrated": 0.65, "market_odds": 1.63,
+                "min_odds": 1.63, "ev_percent": 6.0, "price_type": "model", "lh": 2.2, "la": 0.7,
+            },
+            {
+                "league": "Serie A", "home": "Inter", "away": "Atalanta",
+                "market": "Over 2.5", "p_calibrated": 0.62, "market_odds": 1.71,
+                "min_odds": 1.71, "ev_percent": 6.0, "price_type": "model", "lh": 1.9, "la": 1.4,
+            },
+            {
+                "league": "EPL", "home": "Arsenal", "away": "Chelsea",
+                "market": "1X2 Away Win", "p_calibrated": 0.65, "market_odds": 1.70,
+                "min_odds": 1.63, "ev_percent": 10.5, "price_type": "model", "lh": 1.0, "la": 2.1,
+            },
+        ])
+        approved, rejected = critic.audit(df_test)
+        self.assertEqual(len(approved), 2)
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected.iloc[0]["league"], "EPL")
+
+    def test_public_json_bundle_exports_valid_schemas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pub_dir = Path(tmp) / "public"
+            sample_opps = pd.DataFrame([
+                {
+                    "date": "2026-11-28 18:00:00",
+                    "league": "La Liga",
+                    "home": "Real Madrid",
+                    "away": "Alaves",
+                    "market": "1X2 Home Win",
+                    "selection_side": "HOME",
+                    "p_model": 0.66,
+                    "p_calibrated": 0.64,
+                    "price_type": "model",
+                    "min_odds": 1.66,
+                    "market_odds": 1.66,
+                    "ev_percent": 6.24,
+                    "stake_kelly": 0.02,
+                    "lh": 2.15,
+                    "la": 0.72,
+                }
+            ])
+            summary = {
+                "settled_now": 0,
+                "total_settled_all_time": 21,
+                "wins": 9,
+                "half_wins": 7,
+                "losses": 5,
+                "hit_rate_percent": 59.52,
+                "verified_settled_count": 0,
+                "verified_roi_percent": None,
+                "pending_after": 67,
+            }
+            paths = am.export_public_json_bundle(sample_opps, summary, public_dir=pub_dir)
+            pred_data = json.loads(paths["predictions_latest"].read_text(encoding="utf-8"))
+            perf_data = json.loads(paths["performance_summary"].read_text(encoding="utf-8"))
+
+            self.assertEqual(pred_data["count"], 1)
+            self.assertEqual(pred_data["predictions"][0]["selection_side"], "HOME")
+            self.assertEqual(pred_data["predictions"][0]["min_odds"], 1.66)
+            self.assertEqual(perf_data["settlement"]["hit_rate_percent"], 59.52)
+
+        # Verify repo's backtest_verified_stats.json exists and has required structure
+        bt_path = REPO_ROOT / "data" / "public" / "backtest_verified_stats.json"
+        self.assertTrue(bt_path.exists(), "data/public/backtest_verified_stats.json must exist")
+        bt = json.loads(bt_path.read_text(encoding="utf-8"))
+        self.assertIn("approved_production_pairs", bt)
+        self.assertEqual(len(bt["breakdown"]), 20)
 
 
 if __name__ == "__main__":

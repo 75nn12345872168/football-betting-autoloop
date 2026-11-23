@@ -1,0 +1,180 @@
+{
+  "generated_at": "2026-11-23T05:53:32.959764+00:00",
+  "engine_version": "v3-big5-verified",
+  "min_confidence_pct": 58.0,
+  "safety_margin_pct": 6.0,
+  "approved_leagues": [
+    "La Liga",
+    "Serie A"
+  ],
+  "approved_pairs": [
+    [
+      "La Liga",
+      "1X2 Home"
+    ],
+    [
+      "La Liga",
+      "Under 2.5"
+    ],
+    [
+      "Serie A",
+      "1X2 Away"
+    ],
+    [
+      "Serie A",
+      "Over 2.5"
+    ]
+  ],
+  "mle_calibration": {
+    "la liga": {
+      "mu_home": 1.569,
+      "mu_away": 1.192,
+      "rho": -0.02,
+      "status": "cached",
+      "n": 760
+    },
+    "serie a": {
+      "mu_home": 1.416,
+      "mu_away": 1.288,
+      "rho": 0.02,
+      "status": "fitted",
+      "n": 760
+    }
+  },
+  "count": 7,
+  "predictions": [
+    {
+      "date": "2026-11-28 14:00:00",
+      "league": "Serie A",
+      "home": "Frosinone",
+      "away": "Parma Calcio 1913",
+      "market": "Over 2.5",
+      "selection_side": "",
+      "p_model": 0.5772,
+      "p_calibrated": 0.5811,
+      "price_type": "model",
+      "min_odds": 1.82,
+      "market_odds": 1.82,
+      "ev_percent": 5.76,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 1.815,
+        "away": 1.187
+      }
+    },
+    {
+      "date": "2026-11-28 20:00:00",
+      "league": "La Liga",
+      "home": "Real Madrid",
+      "away": "Alaves",
+      "market": "1X2 Home Win",
+      "selection_side": "HOME",
+      "p_model": 0.6474,
+      "p_calibrated": 0.7442,
+      "price_type": "model",
+      "min_odds": 1.42,
+      "market_odds": 1.42,
+      "ev_percent": 5.68,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 2.114,
+        "away": 0.915
+      }
+    },
+    {
+      "date": "2026-11-29 14:00:00",
+      "league": "Serie A",
+      "home": "Sassuolo",
+      "away": "Napoli",
+      "market": "1X2 Away Win",
+      "selection_side": "AWAY",
+      "p_model": 0.5119,
+      "p_calibrated": 0.5962,
+      "price_type": "model",
+      "min_odds": 1.78,
+      "market_odds": 1.78,
+      "ev_percent": 6.12,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 1.054,
+        "away": 1.637
+      }
+    },
+    {
+      "date": "2026-11-29 17:00:00",
+      "league": "Serie A",
+      "home": "Roma",
+      "away": "Monza",
+      "market": "Over 2.5",
+      "selection_side": "",
+      "p_model": 0.59,
+      "p_calibrated": 0.5932,
+      "price_type": "model",
+      "min_odds": 1.79,
+      "market_odds": 1.79,
+      "ev_percent": 6.18,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 2.026,
+        "away": 1.034
+      }
+    },
+    {
+      "date": "2026-11-30 17:30:00",
+      "league": "Serie A",
+      "home": "Lecce",
+      "away": "Atalanta",
+      "market": "1X2 Away Win",
+      "selection_side": "AWAY",
+      "p_model": 0.5113,
+      "p_calibrated": 0.5954,
+      "price_type": "model",
+      "min_odds": 1.78,
+      "market_odds": 1.78,
+      "ev_percent": 5.98,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 1.156,
+        "away": 1.734
+      }
+    },
+    {
+      "date": "2026-11-30 19:45:00",
+      "league": "Serie A",
+      "home": "Cagliari",
+      "away": "AC Milan",
+      "market": "1X2 Away Win",
+      "selection_side": "AWAY",
+      "p_model": 0.5085,
+      "p_calibrated": 0.5913,
+      "price_type": "model",
+      "min_odds": 1.79,
+      "market_odds": 1.79,
+      "ev_percent": 5.84,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 1.095,
+        "away": 1.663
+      }
+    },
+    {
+      "date": "2026-11-30 20:00:00",
+      "league": "La Liga",
+      "home": "Espanyol",
+      "away": "Getafe",
+      "market": "Under 2.5",
+      "selection_side": "",
+      "p_model": 0.6432,
+      "p_calibrated": 0.657,
+      "price_type": "model",
+      "min_odds": 1.61,
+      "market_odds": 1.61,
+      "ev_percent": 5.78,
+      "stake_kelly": 0.02,
+      "expected_goals": {
+        "home": 1.277,
+        "away": 0.847
+      }
+    }
+  ]
+}

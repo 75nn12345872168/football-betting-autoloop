@@ -1,0 +1,77 @@
+{
+  "generated_at": "2026-11-23T05:53:32.959764+00:00",
+  "engine_version": "v3-big5-verified",
+  "approved_production_pairs": [
+    [
+      "La Liga",
+      "1X2 Home"
+    ],
+    [
+      "La Liga",
+      "Under 2.5"
+    ],
+    [
+      "Serie A",
+      "1X2 Away"
+    ],
+    [
+      "Serie A",
+      "Over 2.5"
+    ]
+  ],
+  "settlement": {
+    "cutoff": "2026-11-23 00:00:00",
+    "pending_before": 79,
+    "eligible_played": 0,
+    "settled_now": 0,
+    "result_not_found": 0,
+    "ambiguous_average": 0,
+    "pending_after": 79,
+    "total_settled_all_time": 21,
+    "wins": 9,
+    "half_wins": 7,
+    "losses": 5,
+    "settled_units": 21,
+    "hit_rate_percent": 59.52,
+    "verified_settled_count": 0,
+    "verified_profit_units": 0.0,
+    "verified_staked": 0.0,
+    "verified_roi_percent": null,
+    "leagues": [
+      "La Liga",
+      "Ligue 1"
+    ]
+  },
+  "breakdown_by_league": {
+    "La Liga": {
+      "settled": 7,
+      "wins": 6,
+      "half_wins": 0,
+      "losses": 1,
+      "hit_rate_percent": 85.71
+    },
+    "Ligue 1": {
+      "settled": 14,
+      "wins": 3,
+      "half_wins": 7,
+      "losses": 4,
+      "hit_rate_percent": 46.43
+    }
+  },
+  "breakdown_by_market": {
+    "AH -0.75": {
+      "settled": 14,
+      "wins": 3,
+      "half_wins": 7,
+      "losses": 4,
+      "hit_rate_percent": 46.43
+    },
+    "Over 2.5": {
+      "settled": 7,
+      "wins": 6,
+      "half_wins": 0,
+      "losses": 1,
+      "hit_rate_percent": 85.71
+    }
+  }
+}

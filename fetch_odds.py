@@ -24,16 +24,13 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 import requests
 
-from live_data import canonical_team_name
+from live_data import ODDS_API_SPORTS, canonical_team_name
 
 LEDGER = "paper_trading_ledger_2026.csv"
 CONFIG = "odds_config.json"
 BASE = "https://api.the-odds-api.com/v4"
 
-SPORT_MAP: Dict[str, str] = {
-    "La Liga": "soccer_spain_la_liga",
-    "Ligue 1": "soccer_france_ligue_one",
-}
+SPORT_MAP: Dict[str, str] = dict(ODDS_API_SPORTS)
 
 
 def get_api_key() -> str:

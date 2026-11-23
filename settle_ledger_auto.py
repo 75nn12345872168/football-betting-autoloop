@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from live_data import (
+    BIG5_LEAGUES,
     REPO_DIR,
     canonical_team_name,
     fetch_all_live_matches,
@@ -40,13 +41,18 @@ SUMMARY_FILE = "ledger_settlement_summary.json"
 # Fixed: each league maps to a LIST of fallback snapshot paths (never a bare str!)
 _LOCAL_FILES: Dict[str, List[str]] = {
     "La Liga": [
+        "data/historical_big5_odds.csv",
         "understat_raw_2026.json",
         "la_liga_matches_2018_2026.csv",
     ],
     "Ligue 1": [
+        "data/historical_big5_odds.csv",
         "live_matches_ligue1.csv",
         "raw_Ligue1_8seasons.json",
     ],
+    "EPL": ["data/historical_big5_odds.csv"],
+    "Bundesliga": ["data/historical_big5_odds.csv"],
+    "Serie A": ["data/historical_big5_odds.csv"],
 }
 
 
@@ -121,6 +127,8 @@ def _load_local_results(league: str, base_dir: Path = REPO_DIR) -> List[Dict[str
                         })
             elif p.suffix.lower() == ".csv":
                 df = pd.read_csv(p)
+                if "league" in df.columns:
+                    df = df[df["league"].astype(str).str.strip() == league]
                 if "isResult" in df.columns:
                     df = df[df["isResult"].astype(str).str.lower() == "true"]
                 df = df.dropna(subset=["date", "goals_home", "goals_away"])
@@ -337,7 +345,7 @@ def settle_ledger(
     df["selection_side"] = df["selection_side"].fillna("").astype(object)
     df["odds_source"] = df["odds_source"].fillna("").astype(object)
 
-    leagues = tuple(sorted({str(x).strip() for x in df["league"].dropna().unique()} | {"La Liga", "Ligue 1"}))
+    leagues = tuple(sorted({str(x).strip() for x in df["league"].dropna().unique()} | set(BIG5_LEAGUES)))
     if live_records is None and use_live:
         live_records = fetch_all_live_matches(leagues=leagues, days_back=45, days_forward=10)
     if sync_history and live_records:
