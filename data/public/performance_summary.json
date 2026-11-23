@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-23T07:29:43.999578+00:00",
+  "generated_at": "2026-11-23T07:57:53.371693+00:00",
   "engine_version": "v4-alpha-promoted",
   "approved_production_pairs": [
     [
@@ -29,7 +29,7 @@
   ],
   "settlement": {
     "cutoff": "2026-11-23 00:00:00",
-    "pending_before": 0,
+    "pending_before": 8,
     "eligible_played": 0,
     "settled_now": 0,
     "result_not_found": 0,
@@ -46,7 +46,11 @@
     "verified_profit_units": 0.0,
     "verified_staked": 0.0,
     "verified_roi_percent": null,
-    "leagues": []
+    "leagues": [
+      "EPL",
+      "La Liga",
+      "Serie A"
+    ]
   },
   "breakdown_by_league": {},
   "breakdown_by_market": {}

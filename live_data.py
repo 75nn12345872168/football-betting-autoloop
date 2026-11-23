@@ -267,6 +267,9 @@ _CANONICAL_ALIASES: Dict[str, str] = {
     "fulham fc": "Fulham",
     "huddersfield": "Huddersfield",
     "huddersfield town": "Huddersfield",
+    "hull": "Hull",
+    "hull city": "Hull",
+    "hull city afc": "Hull",
     "ipswich": "Ipswich",
     "ipswich town": "Ipswich",
     "leeds": "Leeds",
@@ -823,6 +826,123 @@ def _merge_matches(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(merged.values(), key=lambda x: x["date"])
 
 
+FD_UK_DIV_TO_LEAGUE: Dict[str, str] = {
+    "SP1": "La Liga",
+    "F1": "Ligue 1",
+    "E0": "EPL",
+    "D1": "Bundesliga",
+    "I1": "Serie A",
+}
+
+_ACTIVE_ROSTER_CACHE: Dict[str, set] = {}
+
+
+def fetch_active_season_teams(
+    league: str,
+    ref_date: Optional[datetime] = None,
+    timeout: int = 12,
+) -> set:
+    """
+    Fetch the official active top-flight club roster (20/18 clubs) for the
+    current season (e.g. 2026/27) from ESPN `/teams` and football-data.co.uk
+    current-season CSV, so non-league/cup/stale fixtures are strictly excluded.
+    """
+    if league in _ACTIVE_ROSTER_CACHE and _ACTIVE_ROSTER_CACHE[league]:
+        return _ACTIVE_ROSTER_CACHE[league]
+
+    teams: set = set()
+    code = ESPN_LEAGUE_CODES.get(league)
+    if code:
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/teams"
+            r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                j = r.json()
+                for sp in j.get("sports", []):
+                    for lg_obj in sp.get("leagues", []):
+                        for t in lg_obj.get("teams", []):
+                            name = (t.get("team") or {}).get("displayName", "")
+                            if name:
+                                teams.add(canonical_team_name(name, league))
+        except Exception:
+            pass
+
+    if not teams:
+        # Secondary fallback: current-season completed results CSV from football-data.co.uk
+        for m in fetch_fd_uk_season_results(league, ref_date=ref_date, timeout=timeout):
+            if m.get("home"):
+                teams.add(m["home"])
+            if m.get("away"):
+                teams.add(m["away"])
+
+    if teams:
+        _ACTIVE_ROSTER_CACHE[league] = teams
+    return teams
+
+
+def fetch_fd_uk_upcoming_fixtures(
+    leagues: Tuple[str, ...] = BIG5_LEAGUES,
+    timeout: int = 15,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch upcoming weekend fixtures (with UTF-8 BOM decoded) from
+    https://www.football-data.co.uk/fixtures.csv for Big-5 top-flight divisions.
+    """
+    url = "https://www.football-data.co.uk/fixtures.csv"
+    try:
+        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200 or not r.content:
+            return []
+        text = r.content.decode("utf-8-sig", errors="replace")
+        df = pd.read_csv(io.StringIO(text), on_bad_lines="skip")
+    except Exception:
+        return []
+
+    if "Div" not in df.columns:
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    for _, row in df.iterrows():
+        div = str(row.get("Div", "")).strip()
+        lg = FD_UK_DIV_TO_LEAGUE.get(div)
+        if not lg or lg not in leagues:
+            continue
+        raw_date = str(row.get("Date", "")).strip()
+        raw_time = str(row.get("Time", "15:00")).strip()
+        if not raw_date or raw_date.lower() == "nan":
+            continue
+        if not raw_time or raw_time.lower() == "nan":
+            raw_time = "15:00"
+        dt = pd.to_datetime(f"{raw_date} {raw_time}", dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            dt = pd.to_datetime(raw_date, dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            continue
+        dt_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+        home = canonical_team_name(row.get("HomeTeam", ""), lg)
+        away = canonical_team_name(row.get("AwayTeam", ""), lg)
+        if not home or not away:
+            continue
+        rows.append({
+            "league": lg,
+            "date": dt_str,
+            "date_key": dt_str[:10],
+            "home": home,
+            "away": away,
+            "completed": False,
+            "state": "pre",
+            "goals_home": None,
+            "goals_away": None,
+            "xG_home": None,
+            "xG_away": None,
+            "MaxH": _safe_float(row.get("MaxH")),
+            "MaxD": _safe_float(row.get("MaxD")),
+            "MaxA": _safe_float(row.get("MaxA")),
+            "source": "football-data.co.uk/fixtures",
+        })
+    return sorted(rows, key=lambda x: x["date"])
+
+
 def fetch_all_live_matches(
     leagues: Tuple[str, ...] = BIG5_LEAGUES,
     days_back: int = 14,
@@ -843,6 +963,7 @@ def fetch_all_live_matches(
                 pass
 
     all_records: List[Dict[str, Any]] = []
+    all_records.extend(fetch_fd_uk_upcoming_fixtures(leagues=leagues))
     for lg in leagues:
         all_records.extend(fetch_football_data_org_matches(lg))
         all_records.extend(fetch_fd_uk_season_results(lg))
@@ -872,6 +993,7 @@ def fetch_upcoming_fixtures(
     window_days: int = 8,
     now: Optional[pd.Timestamp] = None,
     live_records: Optional[List[Dict[str, Any]]] = None,
+    enforce_active_roster: bool = True,
 ) -> pd.DataFrame:
     ref = (now or pd.Timestamp.now()).normalize()
     end = ref + pd.Timedelta(days=window_days)
@@ -879,24 +1001,35 @@ def fetch_upcoming_fixtures(
         leagues=leagues, days_back=2, days_forward=max(window_days + 2, 10)
     )
 
+    rosters: Dict[str, set] = {}
+    if enforce_active_roster:
+        for lg in leagues:
+            rosters[lg] = fetch_active_season_teams(lg)
+
     upcoming: List[Dict[str, Any]] = []
     seen = set()
     for m in records:
         if m.get("completed"):
             continue
-        if m.get("league") not in leagues:
+        lg = m.get("league")
+        if lg not in leagues:
             continue
+        # Strict active-season roster guard: both clubs must belong to this season's top-flight division
+        active_set = rosters.get(lg)
+        if enforce_active_roster and active_set:
+            if m["home"] not in active_set or m["away"] not in active_set:
+                continue
         dt = pd.to_datetime(m.get("date"), errors="coerce")
         if pd.isna(dt):
             continue
         if ref <= dt <= end:
-            key = (m["league"], dt.strftime("%Y-%m-%d"), m["home"], m["away"])
+            key = (lg, dt.strftime("%Y-%m-%d"), m["home"], m["away"])
             if key in seen:
                 continue
             seen.add(key)
             upcoming.append({
                 "date": dt,
-                "league": m["league"],
+                "league": lg,
                 "home": m["home"],
                 "away": m["away"],
                 "source": m.get("source", "live"),

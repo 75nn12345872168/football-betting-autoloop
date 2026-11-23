@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-23T07:29:43.999578+00:00",
+  "generated_at": "2026-11-23T07:57:53.371693+00:00",
   "engine_version": "v4-alpha-promoted",
   "min_confidence_pct": 60.0,
   "dnb_min_confidence_pct": 70.0,
@@ -105,16 +105,16 @@
       "away": "Coventry",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6646,
-      "p_calibrated": 0.7172,
+      "p_model": 0.6639,
+      "p_calibrated": 0.7163,
       "price_type": "model",
       "min_odds": 1.48,
       "market_odds": 1.48,
-      "ev_percent": 6.15,
+      "ev_percent": 6.01,
       "stake_kelly": 0.02,
       "expected_goals": {
-        "home": 1.607,
-        "away": 1.071
+        "home": 1.602,
+        "away": 1.069
       }
     },
     {
