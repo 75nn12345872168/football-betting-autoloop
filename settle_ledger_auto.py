@@ -281,6 +281,24 @@ def settle_row(
             won = gh == ga
         status = "WIN" if won else "LOSS"
         profit = (stake * (odds - 1.0) if won else -stake) if has_verified_odds else 0.0
+    elif "dnb" in mk_low or "draw no bet" in mk_low or "ah 0" in mk_low:
+        if "home" in mk_low:
+            side = "HOME"
+        elif "away" in mk_low:
+            side = "AWAY"
+        else:
+            side = determine_selection_side(
+                home, away, league, fixture_date=date,
+                explicit_side=row.get("selection_side"), team_model=team_model,
+            )
+        row["selection_side"] = side
+        if gh == ga:
+            status = "PUSH"
+            profit = 0.0
+        else:
+            won = (gh > ga) if side == "HOME" else (ga > gh)
+            status = "WIN" if won else "LOSS"
+            profit = (stake * (odds - 1.0) if won else -stake) if has_verified_odds else 0.0
     elif "ah" in mk_low or "handicap" in mk_low:
         side = determine_selection_side(
             home, away, league, fixture_date=date,
@@ -392,8 +410,9 @@ def settle_ledger(
         else:
             not_found += 1
 
-    # Real-result hit-rate across ALL settled rows (independent of fabricated odds)
+    # Real-result hit-rate across ALL settled rows (PUSH draws excluded from hit-rate denominator)
     done = df[df["status"].isin(["WIN", "LOSS", "HALF WIN"])]
+    pushes = df[df["status"] == "PUSH"]
     wins = done[done["status"] == "WIN"]
     half = done[done["status"] == "HALF WIN"]
     losses = done[done["status"] == "LOSS"]
@@ -420,6 +439,7 @@ def settle_ledger(
         "wins": int(len(wins)),
         "half_wins": int(len(half)),
         "losses": int(len(losses)),
+        "pushes": int(len(pushes)),
         "settled_units": int(settled_units),
         "hit_rate_percent": round(float(hit_rate), 2),
         # Verified-odds-only financial metrics (no fake 1.90 ROI!)

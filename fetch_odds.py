@@ -166,6 +166,13 @@ def extract_market_price(
         if side == "DRAW" or "draw" in mk:
             return rec.get("draw")
         return None
+    if "dnb" in mk or "draw no bet" in mk or "ah 0" in mk:
+        d_odds = rec.get("draw")
+        s_odds = rec.get("home_win") if (side == "HOME" or "home" in mk) else rec.get("away_win")
+        if s_odds and d_odds and s_odds > 1.0 and d_odds > 1.0:
+            odnb = s_odds * (1.0 - 1.0 / d_odds)
+            return round(float(odnb), 3) if odnb > 1.0 else None
+        return None
     if "ah" in mk or "handicap" in mk:
         if side not in ("HOME", "AWAY"):
             return None

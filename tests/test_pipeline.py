@@ -516,7 +516,71 @@ class TestBig5ExpansionEVAndPublicExports(unittest.TestCase):
         self.assertTrue(bt_path.exists(), "data/public/backtest_verified_stats.json must exist")
         bt = json.loads(bt_path.read_text(encoding="utf-8"))
         self.assertIn("approved_production_pairs", bt)
-        self.assertEqual(len(bt["breakdown"]), 20)
+        self.assertEqual(len(bt["breakdown"]), 25)
+
+    def test_dnb_pricing_replication_odds_push_settlement_and_v4_thresholds(self):
+        # 1. Exact conditional DNB probability
+        mat = am.compute_dixon_coles_probs(2.0, 0.9, rho=-0.10)
+        mp = am.calculate_market_probabilities(mat)
+        expected_dnb = mp["home_win"] / (mp["home_win"] + mp["away_win"])
+        self.assertAlmostEqual(mp["dnb_home"], expected_dnb, places=3)
+
+        # 2. Exact tradable DNB replication odds from real 1X2 odds: O_H * (1 - 1/O_D)
+        rec = {"home_win": 2.00, "draw": 4.00, "away_win": 3.80}
+        self.assertAlmostEqual(fo.extract_market_price(rec, "DNB Home", "HOME"), 1.50, places=3)
+
+        # 3. Draw settles as PUSH (0.0 profit), Win settles as WIN
+        fake_index = {
+            ("La Liga", "Real Madrid", "Sevilla"): [(pd.Timestamp("2026-11-15"), 1, 1)],
+            ("La Liga", "Barcelona", "Alaves"): [(pd.Timestamp("2026-11-16"), 2, 0)],
+        }
+        r_push = sla.settle_row(
+            {
+                "date": "2026-11-15", "league": "La Liga", "home": "Real Madrid", "away": "Sevilla",
+                "market": "DNB Home", "selection_side": "HOME", "odds_source": "the-odds-api",
+                "market_odds": 1.55, "stake": 0.02, "status": "PENDING",
+            },
+            cutoff=pd.Timestamp("2026-11-23"), result_index=fake_index,
+        )
+        self.assertEqual(r_push["status"], "PUSH")
+        self.assertEqual(r_push["profit"], 0.0)
+
+        r_win = sla.settle_row(
+            {
+                "date": "2026-11-16", "league": "La Liga", "home": "Barcelona", "away": "Alaves",
+                "market": "DNB Home", "selection_side": "HOME", "odds_source": "the-odds-api",
+                "market_odds": 1.50, "stake": 0.02, "status": "PENDING",
+            },
+            cutoff=pd.Timestamp("2026-11-23"), result_index=fake_index,
+        )
+        self.assertEqual(r_win["status"], "WIN")
+        self.assertAlmostEqual(r_win["profit"], 0.01, places=4)
+
+        # 4. Promoted v4 thresholds: core 1X2/OU requires >= 0.60, DNB requires >= 0.70
+        critic = am.ModelValidatorAgent(enforce_approved_markets=True)
+        self.assertEqual(critic.model_tip_min, 0.60)
+        self.assertEqual(critic.dnb_min, 0.70)
+        df_thr = pd.DataFrame([
+            {
+                "league": "La Liga", "home": "Real Madrid", "away": "Alaves",
+                "market": "1X2 Home Win", "p_calibrated": 0.59, "market_odds": 1.80,
+                "min_odds": 1.80, "ev_percent": 6.0, "price_type": "model", "lh": 2.0, "la": 0.8,
+            },
+            {
+                "league": "La Liga", "home": "Real Madrid", "away": "Alaves",
+                "market": "DNB Home", "p_calibrated": 0.68, "market_odds": 1.56,
+                "min_odds": 1.56, "ev_percent": 6.0, "price_type": "model", "lh": 2.0, "la": 0.8,
+            },
+            {
+                "league": "La Liga", "home": "Real Madrid", "away": "Alaves",
+                "market": "DNB Home", "p_calibrated": 0.73, "market_odds": 1.45,
+                "min_odds": 1.45, "ev_percent": 6.0, "price_type": "model", "lh": 2.2, "la": 0.7,
+            },
+        ])
+        app, rej = critic.audit(df_thr)
+        self.assertEqual(len(app), 1)
+        self.assertEqual(len(rej), 2)
+        self.assertEqual(app.iloc[0]["market"], "DNB Home")
 
 
 if __name__ == "__main__":

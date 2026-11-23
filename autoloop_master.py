@@ -63,14 +63,17 @@ _PRIOR_RHO = -0.10
 
 # Broker mode safety margin: require >= +6% buffer over fair calibrated price.
 BROKER_SAFETY_MARGIN = 1.06
+DEFAULT_MODEL_TIP_MIN = 0.60
+DEFAULT_DNB_MIN = 0.70
 
 # Per-league fitted params: {normalized_league: {mu_home, mu_away, rho, status, n}}.
 _FITTED_BY_LEAGUE: Dict[str, Dict[str, Any]] = {}
 
-# Verified profitable (league, market) pairs from strict 2019-2026 historical odds backtest
-# (ROI > 0% against real bookmaker odds + positive Brier skill + n >= 15 bets).
+# Verified profitable (league, market) pairs from strict 2019-2026 historical odds & R&D backtest
+# (ROI > 0% against real bookmaker odds + positive Brier skill + positive CLV / seasonal stability).
 _DEFAULT_APPROVED_PAIRS: Tuple[Tuple[str, str], ...] = (
     ("La Liga", "1X2 Home"),
+    ("La Liga", "DNB Home"),
     ("La Liga", "Under 2.5"),
     ("Serie A", "1X2 Away"),
     ("Serie A", "Over 2.5"),
@@ -83,6 +86,8 @@ _DEFAULT_PLATT_PARAMS: Dict[Tuple[str, str], Tuple[float, float]] = {
 
 def normalize_market_key(market: Any) -> str:
     mk = str(market or "").strip().lower()
+    if "dnb" in mk or "draw no bet" in mk or "ah 0" in mk:
+        return "dnb away" if "away" in mk else "dnb home"
     if "ah" in mk or "handicap" in mk:
         return "ah_-0.75"
     if "over" in mk and "2.5" in mk:
@@ -425,6 +430,9 @@ def calculate_market_probabilities(prob_matrix: np.ndarray) -> Dict[str, float]:
 
     ah_minus_075_home = p_diff_ge_2_h + 0.5 * p_diff_1_h
     ah_minus_075_away = p_diff_ge_2_a + 0.5 * p_diff_1_a
+    non_draw = home_win + away_win
+    dnb_home = home_win / non_draw if non_draw > 0 else 0.5
+    dnb_away = away_win / non_draw if non_draw > 0 else 0.5
 
     return {
         "over_2.5": round(float(over_25), 4),
@@ -433,6 +441,8 @@ def calculate_market_probabilities(prob_matrix: np.ndarray) -> Dict[str, float]:
         "home_win": round(home_win, 4),
         "draw": round(draw, 4),
         "away_win": round(away_win, 4),
+        "dnb_home": round(float(dnb_home), 4),
+        "dnb_away": round(float(dnb_away), 4),
         "ah_-0.75_home": round(float(ah_minus_075_home), 4),
         "ah_-0.75_away": round(float(ah_minus_075_away), 4),
     }
@@ -708,6 +718,7 @@ class DataIngestionAgent:
                 # Candidate markets: ONLY backtest-approved profitable (league, market) pairs
                 all_candidates = [
                     ("1X2 Home Win", "HOME"),
+                    ("DNB Home", "HOME"),
                     ("1X2 Away Win", "AWAY"),
                     ("Over 2.5", ""),
                     ("Under 2.5", ""),
@@ -815,12 +826,14 @@ class ModelValidatorAgent:
     def __init__(
         self,
         min_ev_pct: float = 2.0,
-        model_tip_min: float = 0.58,
+        model_tip_min: float = DEFAULT_MODEL_TIP_MIN,
+        dnb_min: float = DEFAULT_DNB_MIN,
         ah_ligue1_min: float = 0.62,
         enforce_approved_markets: bool = True,
     ) -> None:
         self.min_ev_pct = float(min_ev_pct)
         self.model_tip_min = float(model_tip_min)
+        self.dnb_min = float(dnb_min)
         self.ah_ligue1_min = float(ah_ligue1_min)
         self.enforce_approved_markets = bool(enforce_approved_markets)
 
@@ -854,10 +867,15 @@ class ModelValidatorAgent:
                 return ("REJECTED", f"EV {ev_pct:+.1f}% below {self.min_ev_pct:.1f}% gate")
             return ("APPROVED", f"verified price, EV {ev_pct:+.1f}%")
 
-        # Broker Mode: enforce stricter threshold on Ligue 1 AH -0.75 (calibrated)
+        # Broker Mode: dedicated threshold per market class (DNB >= 0.70, core 1X2/OU >= 0.60)
         mk_low = str(row.get("market", "")).lower()
         lg_low = _norm_league(row.get("league", ""))
-        min_conf = self.ah_ligue1_min if (lg_low == "ligue 1" and "ah" in mk_low) else self.model_tip_min
+        if "dnb" in mk_low or "draw no bet" in mk_low or "ah 0" in mk_low:
+            min_conf = self.dnb_min
+        elif lg_low == "ligue 1" and "ah" in mk_low:
+            min_conf = self.ah_ligue1_min
+        else:
+            min_conf = self.model_tip_min
         if p < min_conf:
             return ("REJECTED", f"calibrated confidence p={p:.2f} below {min_conf:.0%} gate")
         m = float(row.get("min_odds") or 0.0)
@@ -1021,6 +1039,18 @@ def fetch_and_evaluate_opportunities(
                     home, away, league, fixture_date=row["date"], lh=lh, la=la
                 )
                 p_raw = mp["home_win"] if selection_side == "HOME" else mp["away_win"]
+        elif "dnb" in mk_low or "draw no bet" in mk_low or "ah 0" in mk_low:
+            if "home" in mk_low or str(explicit_side).upper() == "HOME":
+                selection_side = "HOME"
+                p_raw = mp["dnb_home"]
+            elif "away" in mk_low or str(explicit_side).upper() == "AWAY":
+                selection_side = "AWAY"
+                p_raw = mp["dnb_away"]
+            else:
+                selection_side = determine_selection_side(
+                    home, away, league, fixture_date=row["date"], lh=lh, la=la
+                )
+                p_raw = mp["dnb_home"] if selection_side == "HOME" else mp["dnb_away"]
         elif "ah" in mk_low or "handicap" in mk_low:
             selection_side = determine_selection_side(
                 home, away, league, fixture_date=row["date"],
@@ -1057,7 +1087,8 @@ def fetch_and_evaluate_opportunities(
             # Expected value IF bettor achieves >= min_odds (+6% target margin)
             ev_percent = round(compute_ev(p_cal, min_odds_req) * 100.0, 2)
             edge = 0.0
-            stake_kelly = 0.02 if p_cal >= 0.58 else 0.0
+            conf_req = DEFAULT_DNB_MIN if ("dnb" in mk_low or "draw no bet" in mk_low) else DEFAULT_MODEL_TIP_MIN
+            stake_kelly = 0.02 if p_cal >= conf_req else 0.0
 
         row_dict = row.to_dict()
         row_dict["home"] = home
@@ -1353,8 +1384,9 @@ def export_public_json_bundle(
 
     predictions_payload = {
         "generated_at": now_iso,
-        "engine_version": "v3-big5-verified",
-        "min_confidence_pct": 58.0,
+        "engine_version": "v4-alpha-promoted",
+        "min_confidence_pct": round(DEFAULT_MODEL_TIP_MIN * 100.0, 1),
+        "dnb_min_confidence_pct": round(DEFAULT_DNB_MIN * 100.0, 1),
         "safety_margin_pct": round((BROKER_SAFETY_MARGIN - 1.0) * 100.0, 1),
         "approved_leagues": list(ACTIVE_LEAGUES),
         "approved_pairs": [[lg, mk] for lg, mk in APPROVED_PRODUCTION_PAIRS],
@@ -1431,7 +1463,11 @@ def main() -> None:
     quant_agent = QuantCalibrationAgent(team_model=team_model)
     risk_agent = RiskManagementAgent(kelly_fraction=0.25, max_stake=0.05)
     critic_agent = ModelValidatorAgent(
-        min_ev_pct=2.0, model_tip_min=0.58, ah_ligue1_min=0.62, enforce_approved_markets=True
+        min_ev_pct=2.0,
+        model_tip_min=DEFAULT_MODEL_TIP_MIN,
+        dnb_min=DEFAULT_DNB_MIN,
+        ah_ligue1_min=0.62,
+        enforce_approved_markets=True,
     )
 
     # 2. Per-league Dynamic MLE calibration for active profitable leagues

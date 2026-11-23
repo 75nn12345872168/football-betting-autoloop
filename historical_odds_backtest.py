@@ -43,13 +43,21 @@ from team_strength import DEFAULT_XI, TeamStrengthModel, XG_WEIGHT
 PUBLIC_DIR = REPO_DIR / "data" / "public"
 BACKTEST_JSON = PUBLIC_DIR / "backtest_verified_stats.json"
 
-MIN_CONF = 0.58
+MIN_CONF = 0.60
+DNB_MIN_CONF = 0.70
 SAFETY_MARGIN = BROKER_SAFETY_MARGIN  # 1.06
 KELLY_FRACTION = 0.25
 KELLY_MAX_STAKE = 0.05
 START_BANKROLL = 100.0
 
-MARKETS = ("1X2 Home", "1X2 Away", "Over 2.5", "Under 2.5")
+MARKETS = ("1X2 Home", "1X2 Away", "Over 2.5", "Under 2.5", "DNB Home")
+
+
+def _synth_dnb_odds(o_side: float, o_draw: float) -> Optional[float]:
+    if not all(x is not None and np.isfinite(x) and x > 1.0 for x in (o_side, o_draw)):
+        return None
+    val = float(o_side) * (1.0 - 1.0 / float(o_draw))
+    return val if val > 1.0 else None
 
 
 def _vig_free_prob_3way(o_target: float, o1: float, o2: float, o3: float) -> Optional[float]:
@@ -75,15 +83,17 @@ def _simulate_strategy(
 ) -> Dict[str, Any]:
     """
     Simulate Flat 1u and 0.25x Fractional Kelly staking on bets that satisfy:
-      p_cal >= 0.58 AND odds >= 1.06 / p_cal.
+      p_cal >= threshold (0.70 for DNB, 0.60 for 1X2 & O/U 2.5) AND odds >= 1.06 / p_cal.
+    Handles DNB pushes (y == -1 -> 0.0 profit, excluded from decided win-rate).
     """
     qualified = []
     for b in bets:
         odds = b.get(odds_key)
         p_cal = b["p_cal"]
+        thr = DNB_MIN_CONF if "DNB" in str(b.get("market", "")) else MIN_CONF
         if odds is None or not np.isfinite(odds) or odds <= 1.0:
             continue
-        if p_cal >= MIN_CONF and odds >= (SAFETY_MARGIN / p_cal):
+        if p_cal >= thr and odds >= (SAFETY_MARGIN / p_cal):
             qualified.append((b, float(odds)))
 
     n = len(qualified)
@@ -91,6 +101,7 @@ def _simulate_strategy(
         return {
             "total_bets": 0,
             "wins": 0,
+            "pushes": 0,
             "win_rate_pct": 0.0,
             "avg_pred_pct": 0.0,
             "avg_odds": 0.0,
@@ -106,13 +117,11 @@ def _simulate_strategy(
             "clv_sample_n": 0,
         }
 
-    # Flat 1-unit bankroll (starts at 100u so drawdown % is directly comparable)
     flat_eq = START_BANKROLL
     flat_peak = START_BANKROLL
     flat_max_dd = 0.0
     flat_pnl = 0.0
 
-    # Fractional Kelly bankroll (starts at 100u)
     kelly_eq = START_BANKROLL
     kelly_peak = START_BANKROLL
     kelly_max_dd = 0.0
@@ -120,6 +129,7 @@ def _simulate_strategy(
     kelly_pnl_total = 0.0
 
     wins = 0
+    pushes = 0
     odds_list = []
     pred_list = []
     clv_fair_list = []
@@ -128,12 +138,18 @@ def _simulate_strategy(
     for b, odds in qualified:
         y = int(b["y"])
         p_cal = float(b["p_cal"])
-        wins += y
         odds_list.append(odds)
         pred_list.append(p_cal)
 
-        # Flat 1u
-        pnl_u = (odds - 1.0) if y == 1 else -1.0
+        if y == 1:
+            wins += 1
+            pnl_u = odds - 1.0
+        elif y == -1:
+            pushes += 1
+            pnl_u = 0.0
+        else:
+            pnl_u = -1.0
+
         flat_pnl += pnl_u
         flat_eq += pnl_u
         if flat_eq > flat_peak:
@@ -142,10 +158,9 @@ def _simulate_strategy(
         if dd_f > flat_max_dd:
             flat_max_dd = dd_f
 
-        # Fractional Kelly
         f_stake = calculate_fractional_kelly(p_cal, odds, fraction=KELLY_FRACTION, max_stake=KELLY_MAX_STAKE)
         stake_u = kelly_eq * f_stake
-        k_pnl = stake_u * (odds - 1.0) if y == 1 else -stake_u
+        k_pnl = stake_u * pnl_u
         kelly_staked_total += stake_u
         kelly_pnl_total += k_pnl
         kelly_eq = max(0.01, kelly_eq + k_pnl)
@@ -155,7 +170,6 @@ def _simulate_strategy(
         if dd_k > kelly_max_dd:
             kelly_max_dd = dd_k
 
-        # CLV vs Pinnacle Closing Line
         p_close_fair = b.get("p_close_fair")
         o_close = b.get("close_odds")
         if p_close_fair is not None and np.isfinite(p_close_fair):
@@ -163,10 +177,12 @@ def _simulate_strategy(
         if o_close is not None and np.isfinite(o_close) and o_close > 1.0:
             clv_raw_list.append((odds / o_close - 1.0) * 100.0)
 
+    decided = max(1, n - pushes)
     return {
         "total_bets": int(n),
         "wins": int(wins),
-        "win_rate_pct": round(wins / n * 100.0, 2),
+        "pushes": int(pushes),
+        "win_rate_pct": round(wins / decided * 100.0, 2),
         "avg_pred_pct": round(float(np.mean(pred_list)) * 100.0, 2),
         "avg_odds": round(float(np.mean(odds_list)), 3),
         "flat_profit_units": round(flat_pnl, 2),
@@ -250,12 +266,19 @@ def run_backtest(
             gh, ga = int(row["goals_home"]), int(row["goals_away"])
             psh, psd, psa = row.get("PSH"), row.get("PSD"), row.get("PSA")
             psch, pscd, psca = row.get("PSCH"), row.get("PSCD"), row.get("PSCA")
-            maxh, maxa = row.get("MaxH"), row.get("MaxA")
+            maxh, maxd, maxa = row.get("MaxH"), row.get("MaxD"), row.get("MaxA")
             po, pu = row.get("P_over25"), row.get("P_under25")
             pco, pcu = row.get("PC_over25"), row.get("PC_under25")
             maxo, maxu = row.get("Max_over25"), row.get("Max_under25")
 
-            # Use Max market odds, falling back to Pinnacle if Max missing; and Pinnacle odds separately
+            ph_close = _vig_free_prob_3way(psch, psch, pscd, psca)
+            pa_close = _vig_free_prob_3way(psca, psch, pscd, psca)
+            dnb_h_close_fair = (
+                ph_close / (ph_close + pa_close)
+                if (ph_close and pa_close and (ph_close + pa_close) > 0)
+                else None
+            )
+
             market_entries = [
                 (
                     "1X2 Home",
@@ -264,7 +287,7 @@ def run_backtest(
                     maxh if pd.notna(maxh) else psh,
                     psh,
                     psch,
-                    _vig_free_prob_3way(psch, psch, pscd, psca),
+                    ph_close,
                 ),
                 (
                     "1X2 Away",
@@ -273,7 +296,7 @@ def run_backtest(
                     maxa if pd.notna(maxa) else psa,
                     psa,
                     psca,
-                    _vig_free_prob_3way(psca, psch, pscd, psca),
+                    pa_close,
                 ),
                 (
                     "Over 2.5",
@@ -293,16 +316,27 @@ def run_backtest(
                     pcu,
                     _vig_free_prob_2way(pcu, pco),
                 ),
+                (
+                    "DNB Home",
+                    mp["dnb_home"],
+                    1 if gh > ga else (-1 if gh == ga else 0),
+                    _synth_dnb_odds(maxh if pd.notna(maxh) else psh, maxd if pd.notna(maxd) else psd),
+                    _synth_dnb_odds(psh, psd),
+                    _synth_dnb_odds(psch, pscd),
+                    dnb_h_close_fair,
+                ),
             ]
             for mk, p_raw, y, best_odds, pin_odds, close_odds, p_close_fair in market_entries:
                 raw_records[(lg, mk)].append({
+                    "league": lg,
+                    "market": mk,
                     "season": season,
                     "date": str(row["date"])[:10],
                     "p_raw": float(p_raw),
                     "y": int(y),
-                    "max_odds": float(best_odds) if pd.notna(best_odds) else None,
-                    "pin_odds": float(pin_odds) if pd.notna(pin_odds) else None,
-                    "close_odds": float(close_odds) if pd.notna(close_odds) else None,
+                    "max_odds": float(best_odds) if best_odds is not None and pd.notna(best_odds) else None,
+                    "pin_odds": float(pin_odds) if pin_odds is not None and pd.notna(pin_odds) else None,
+                    "close_odds": float(close_odds) if close_odds is not None and pd.notna(close_odds) else None,
                     "p_close_fair": p_close_fair,
                 })
 
@@ -322,9 +356,9 @@ def run_backtest(
             for s in seasons:
                 if s <= 2018:
                     continue  # 2018 is strictly warmup
-                prior = [r for r in recs if r["season"] < s]
+                prior = [r for r in recs if r["season"] < s and r["y"] != -1]
                 cur = [r for r in recs if r["season"] == s]
-                if len(prior) >= 100:
+                if len(prior) >= 80:
                     a, b = fit_platt_calibrator(
                         np.array([r["p_raw"] for r in prior]),
                         np.array([r["y"] for r in prior]),
@@ -337,28 +371,37 @@ def run_backtest(
                     item["p_cal"] = round(p_cal, 4)
                     oos_bets.append(item)
 
-            # Fit final deployable Platt params on all completed history for production use
-            if len(recs) >= 200:
+            # Fit final deployable Platt params on all completed decided history for production use
+            dec_all = [r for r in recs if r["y"] != -1]
+            if len(dec_all) >= 200:
                 af, bf = fit_platt_calibrator(
-                    np.array([r["p_raw"] for r in recs]),
-                    np.array([r["y"] for r in recs]),
+                    np.array([r["p_raw"] for r in dec_all]),
+                    np.array([r["y"] for r in dec_all]),
                 )
                 fitted_platt_latest[f"{lg.lower()}|{mk.lower()}"] = (af, bf)
 
-            p_arr = np.array([r["p_cal"] for r in oos_bets], dtype=float)
-            y_arr = np.array([r["y"] for r in oos_bets], dtype=float)
+            dec_oos = [r for r in oos_bets if r["y"] != -1]
+            p_arr = np.array([r["p_cal"] for r in dec_oos], dtype=float)
+            y_arr = np.array([r["y"] for r in dec_oos], dtype=float)
             brier, b_skill, ll_skill = _brier_and_ll(p_arr, y_arr)
 
             max_stats = _simulate_strategy(oos_bets, "max_odds")
             pin_stats = _simulate_strategy(oos_bets, "pin_odds")
-            all_oos_bets_max.extend(oos_bets)
+            if mk != "DNB Home":
+                all_oos_bets_max.extend(oos_bets)
 
-            # Qualification for production: profitable against real market odds (ROI > 0%),
-            # meaningful sample size (>= 15 bets), and positive Brier skill.
+            # Institutional production gate:
+            # Must beat BOTH Best Market (>= +3% Flat ROI, positive Kelly ROI) AND
+            # Pinnacle Opening (> 0% ROI) with meaningful sample size (>= 30 bets)
+            # and positive Brier skill. DNB additionally requires positive Pinnacle CLV.
+            is_dnb = mk == "DNB Home"
             profitable_max = (
-                max_stats["total_bets"] >= 15
-                and max_stats["flat_roi_pct"] > 0.0
+                max_stats["total_bets"] >= 30
+                and max_stats["flat_roi_pct"] >= 3.0
+                and max_stats["kelly_roi_pct"] > 0.0
+                and pin_stats["flat_roi_pct"] > 0.0
                 and b_skill > 0.0
+                and ((not is_dnb) or (max_stats["clv_fair_pct"] is not None and max_stats["clv_fair_pct"] > 0.0))
             )
             profitable_pin = (
                 pin_stats["total_bets"] >= 10
@@ -391,12 +434,12 @@ def run_backtest(
         for s in seasons:
             if s <= 2018:
                 continue
-            prior = [r for r in recs if r["season"] < s]
+            prior = [r for r in recs if r["season"] < s and r["y"] != -1]
             cur = [r for r in recs if r["season"] == s]
             a, b = fit_platt_calibrator(
                 np.array([r["p_raw"] for r in prior]),
                 np.array([r["y"] for r in prior]),
-            ) if len(prior) >= 100 else (1.0, 0.0)
+            ) if len(prior) >= 80 else (1.0, 0.0)
             for r in cur:
                 item = dict(r)
                 item["p_cal"] = round(float(np.clip(_sigmoid(a * _logit(r["p_raw"]) + b), 0.01, 0.99)), 4)
