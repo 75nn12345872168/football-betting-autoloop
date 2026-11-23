@@ -7,56 +7,56 @@
 • سجل النتائج الفعلية (0 صفقة): <b>0 فوز / 0 نصف فوز / 0 خسارة</b> (الدقة: <b>0.0%</b>)
 • العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>
 • العمليات المعلقة: <b>8</b>
-• معايرة MLE: <code>Epl: μH=1.53 μA=1.23 ρ=-0.030 (cached) | La Liga: μH=1.57 μA=1.19 ρ=-0.020 (cached) | Serie A: μH=1.42 μA=1.29 ρ=0.020 (cached)</code>
+• معايرة MLE: <code>Epl: μH=1.53 μA=1.24 ρ=-0.038 (fitted) | La Liga: μH=1.57 μA=1.19 ρ=-0.019 (cached) | Serie A: μH=1.42 μA=1.29 ρ=0.022 (fitted)</code>
 • تدقيق الناقد: <code>8 معتمدة / 57 مرفوضة (هامش أمان +6% | المحفظة: matchday-cap applied x1)</code>
 
 🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>
 • <b>2026-11-28 | La Liga</b>
   ⚽ Real Betis vs Rayo Vallecano
   🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.6%</b> → الحد الأدنى ≥ <b>1.46</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.26</b> @ <b>Betfair</b> | Pinnacle: <code>1.24</code> | EV حي: <code>-8.5%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  📡 السعر الحي: <b>1.27</b> @ <b>Matchbook</b> | Pinnacle: <code>1.24</code> | EV حي: <code>-7.8%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-28 | Serie A</b>
   ⚽ Frosinone vs Parma Calcio 1913
-  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.9%</b> → الحد الأدنى ≥ <b>1.46</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.25</b> @ <b>1xBet</b> | Pinnacle: <code>1.22</code> | EV حي: <code>-8.9%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.8%</b> → الحد الأدنى ≥ <b>1.46</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.27</b> @ <b>Coolbet</b> | Pinnacle: <code>1.26</code> | EV حي: <code>-7.5%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-28 | EPL</b>
   ⚽ Leeds vs Coventry
-  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.6%</b> → الحد الأدنى ≥ <b>1.48</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.24</b> @ <b>1xBet</b> | Pinnacle: <code>1.20</code> | EV حي: <code>-11.2%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.5%</b> → الحد الأدنى ≥ <b>1.48</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.24</b> @ <b>1xBet</b> | Pinnacle: <code>1.20</code> | EV حي: <code>-11.3%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-28 | Serie A</b>
   ⚽ Inter vs Genoa
-  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>85.7%</b> → الحد الأدنى ≥ <b>1.24</b> <i>(+6% أمان)</i>
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>85.6%</b> → الحد الأدنى ≥ <b>1.24</b> <i>(+6% أمان)</i>
   📡 السعر الحي: <b>1.12</b> @ <b>1xBet</b> | Pinnacle: <code>1.10</code> | EV حي: <code>-4.1%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-28 | La Liga</b>
   ⚽ Real Madrid vs Alaves
   🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>89.0%</b> → الحد الأدنى ≥ <b>1.19</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.05</b> @ <b>Matchbook</b> | Pinnacle: <code>1.03</code> | EV حي: <code>-6.6%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  📡 السعر الحي: <b>1.06</b> @ <b>Smarkets</b> | Pinnacle: <code>1.03</code> | EV حي: <code>-5.7%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-29 | Serie A</b>
   ⚽ Roma vs Monza
   🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>83.7%</b> → الحد الأدنى ≥ <b>1.27</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.08</b> @ <b>Matchbook</b> | Pinnacle: <code>1.04</code> | EV حي: <code>-9.6%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  📡 السعر الحي: <b>1.07</b> @ <b>Betfair</b> | Pinnacle: <code>1.05</code> | EV حي: <code>-10.5%</code> | ⏳ <b>WAIT FOR ODDS</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-29 | La Liga</b>
   ⚽ Real Sociedad vs Sevilla
-  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.0%</b> → الحد الأدنى ≥ <b>1.49</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.62</b> @ <b>Betfair</b> | Pinnacle: <code>1.60</code> | EV حي: <code>+14.9%</code> | ✅ <b>LIVE +EV</b>
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.9%</b> → الحد الأدنى ≥ <b>1.49</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.62</b> @ <b>Betfair</b> | Pinnacle: <code>1.61</code> | EV حي: <code>+14.9%</code> | ✅ <b>LIVE +EV</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 • <b>2026-11-30 | La Liga</b>
   ⚽ Espanyol vs Getafe
   🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.3%</b> → الحد الأدنى ≥ <b>1.51</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.53</b> @ <b>1xBet</b> | Pinnacle: <code>1.42</code> | EV حي: <code>+7.5%</code> | ✅ <b>LIVE +EV</b>
+  📡 السعر الحي: <b>1.53</b> @ <b>1xBet</b> | Pinnacle: <code>1.43</code> | EV حي: <code>+7.6%</code> | ✅ <b>LIVE +EV</b>
   💼 حجم الرهان المقترح: <b>2.00%</b>
 
 📡 <i>الأسعار الحية مدمجة من The Odds API v4: ادخل فقط عند شارة ✅ LIVE +EV وتوفّر سعر ≥ الحد الأدنى (+6% هامش أمان).</i>
