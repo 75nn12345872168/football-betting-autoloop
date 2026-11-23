@@ -45,6 +45,11 @@ from live_data import (
     fetch_upcoming_fixtures,
     sync_live_history,
 )
+from live_odds_fetcher import (
+    evaluate_live_actionability,
+    fetch_live_odds_for_leagues,
+    match_live_odds_for_fixture,
+)
 from settle_ledger_auto import (
     ARCHIVE_WEEKLY_FILE,
     LEDGER,
@@ -1246,6 +1251,55 @@ def dedup_opportunities(df_opps: pd.DataFrame, sent_keys: set) -> Tuple[pd.DataF
     return new_df, new_keys, skipped
 
 
+def enrich_opportunities_with_live_odds(
+    df_opps: pd.DataFrame,
+    live_odds_by_league: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> pd.DataFrame:
+    """
+    Enrich approved opportunities with real-time bookmaker odds from The Odds API v4:
+      * live_best_odds, live_best_bookmaker, live_pinnacle_odds
+      * live_ev_pct = (calibrated_prob * live_best_odds - 1) * 100
+      * is_live_actionable = True iff live_best_odds >= min_acceptable_odds
+    Fail-safe: populates None / False cleanly when live odds are unavailable.
+    """
+    if df_opps is None or df_opps.empty:
+        return df_opps
+    out = df_opps.copy()
+    best_odds_list: List[Optional[float]] = []
+    best_bk_list: List[Optional[str]] = []
+    pin_odds_list: List[Optional[float]] = []
+    live_ev_list: List[Optional[float]] = []
+    actionable_list: List[bool] = []
+
+    for _, r in out.iterrows():
+        q = match_live_odds_for_fixture(
+            league=str(r.get("league", "")),
+            home=str(r.get("home", "")),
+            away=str(r.get("away", "")),
+            market=str(r.get("market", "")),
+            selection_side=str(r.get("selection_side", "") or ""),
+            live_odds_by_league=live_odds_by_league,
+        )
+        p_cal = float(r.get("p_calibrated", r.get("p_model", 0.0)))
+        min_o = r.get("min_odds")
+        if min_o is None or pd.isna(min_o):
+            min_o = compute_broker_min_odds(p_cal, BROKER_SAFETY_MARGIN)
+        ev_info = evaluate_live_actionability(p_cal, float(min_o), q["live_best_odds"])
+
+        best_odds_list.append(q["live_best_odds"])
+        best_bk_list.append(q["live_best_bookmaker"])
+        pin_odds_list.append(q["live_pinnacle_odds"])
+        live_ev_list.append(ev_info["live_ev_pct"])
+        actionable_list.append(bool(ev_info["is_live_actionable"]))
+
+    out["live_best_odds"] = best_odds_list
+    out["live_best_bookmaker"] = best_bk_list
+    out["live_pinnacle_odds"] = pin_odds_list
+    out["live_ev_pct"] = live_ev_list
+    out["is_live_actionable"] = actionable_list
+    return out
+
+
 def export_public_json_bundle(
     df_opps: pd.DataFrame,
     summary: Dict[str, Any],
@@ -1318,11 +1372,16 @@ def export_public_json_bundle(
     summary["weekly_summary_count"] = int(weekly_archive["total_weeks"])
     summary["closed_weeks_count"] = int(weekly_archive["closed_weeks_count"])
 
-    # 1. predictions_latest.json (with `transparency_banner` at top!)
+    # 1. predictions_latest.json (with `transparency_banner` at top + live bookmaker odds!)
     preds_list: List[Dict[str, Any]] = []
     if df_opps is not None and not df_opps.empty:
         for _, r in df_opps.iterrows():
             mw = get_matchweek_window(r["date"])
+            l_best = r.get("live_best_odds")
+            l_pin = r.get("live_pinnacle_odds")
+            l_ev = r.get("live_ev_pct")
+            l_bk = r.get("live_best_bookmaker")
+            l_act = r.get("is_live_actionable")
             preds_list.append({
                 "date": str(r["date"])[:19],
                 "matchweek_id": mw["matchweek_id"],
@@ -1338,11 +1397,19 @@ def export_public_json_bundle(
                 "market_odds": round(float(r.get("market_odds", 0.0)), 2),
                 "ev_percent": round(float(r.get("ev_percent", 0.0)), 2),
                 "stake_kelly": round(float(r.get("stake_kelly", 0.0)), 4),
+                "live_best_odds": None if (l_best is None or pd.isna(l_best)) else round(float(l_best), 2),
+                "live_best_bookmaker": None if (l_bk is None or (isinstance(l_bk, float) and pd.isna(l_bk)) or not str(l_bk).strip()) else str(l_bk),
+                "live_pinnacle_odds": None if (l_pin is None or pd.isna(l_pin)) else round(float(l_pin), 2),
+                "live_ev_pct": None if (l_ev is None or pd.isna(l_ev)) else round(float(l_ev), 2),
+                "is_live_actionable": bool(l_act) if (l_act is not None and not pd.isna(l_act)) else False,
                 "expected_goals": {
                     "home": round(float(r.get("lh", 0.0)), 3),
                     "away": round(float(r.get("la", 0.0)), 3),
                 },
             })
+
+    live_priced_count = sum(1 for x in preds_list if x["live_best_odds"] is not None)
+    live_actionable_count = sum(1 for x in preds_list if x["is_live_actionable"])
 
     mle_snapshot = {
         lg: {
@@ -1359,6 +1426,11 @@ def export_public_json_bundle(
         "generated_at": now_iso,
         "engine_version": "v4-alpha-promoted",
         "transparency_banner": transparency_banner,
+        "live_odds_meta": {
+            "provider": "the-odds-api-v4",
+            "live_priced_count": live_priced_count,
+            "live_actionable_count": live_actionable_count,
+        },
         "min_confidence_pct": round(DEFAULT_MODEL_TIP_MIN * 100.0, 1),
         "dnb_min_confidence_pct": round(DEFAULT_DNB_MIN * 100.0, 1),
         "safety_margin_pct": round((BROKER_SAFETY_MARGIN - 1.0) * 100.0, 1),
@@ -1447,6 +1519,10 @@ def main() -> None:
             .sort_values("date")
             .reset_index(drop=True)
         )
+
+    # Enrich approved picks with live bookmaker odds from The Odds API v4 (fail-safe)
+    live_odds_by_league = fetch_live_odds_for_leagues(leagues=ACTIVE_LEAGUES)
+    df_opps = enrich_opportunities_with_live_odds(df_opps, live_odds_by_league)
 
     # Record approved picks to ledger for automatic future settlement
     recorded = record_approved_bets_to_ledger(df_opps)

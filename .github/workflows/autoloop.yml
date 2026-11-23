@@ -37,16 +37,6 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
-      - name: Fetch real odds (The Odds API)
-        env:
-          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
-        run: |
-          if [ -n "$THE_ODDS_API_KEY" ]; then
-            python fetch_odds.py
-          else
-            echo "THE_ODDS_API_KEY not set; skipping real odds fetch."
-          fi
-
       - name: Telegram delivery test (manual trigger)
         if: ${{ inputs.telegram_test == true }}
         env:

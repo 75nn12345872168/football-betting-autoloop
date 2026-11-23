@@ -139,6 +139,7 @@ def format_telegram_report(
         msg += "<i>لا توجد فرص مستوفية لمعايير الثقة والقيمة لهذه الجولة.</i>\n"
     else:
         _any_model = False
+        _any_live = False
         for _, r in df_opps.iterrows():
             d_str = str(r["date"])[:10]
             league = r["league"]
@@ -150,6 +151,13 @@ def format_telegram_report(
             p_cal = float(r.get("p_calibrated", r.get("p_model", 0.58))) * 100.0
             stake = float(r.get("stake_kelly", 0.02)) * 100.0
             pt = str(r.get("price_type", "model"))
+            l_best = r.get("live_best_odds")
+            l_bk = r.get("live_best_bookmaker")
+            l_pin = r.get("live_pinnacle_odds")
+            l_ev = r.get("live_ev_pct")
+            l_act = r.get("is_live_actionable")
+            has_live = l_best is not None and not pd.isna(l_best) and float(l_best) > 1.0
+
             if pt == "verified":
                 odds = float(r["market_odds"])
                 ev = float(r.get("ev_percent", 0.0))
@@ -159,13 +167,37 @@ def format_telegram_report(
                 mo = float(r.get("min_odds") or 0.0)
                 price_line = (
                     f"  🎯 <b>{market}{side_tag}</b> | الثقة المعايَرة <b>{p_cal:.1f}%</b> "
-                    f"→ ابحث عن سعر ≥ <b>{mo:.2f}</b> <i>(+6% أمان)</i>\n"
+                    f"→ الحد الأدنى ≥ <b>{mo:.2f}</b> <i>(+6% أمان)</i>\n"
                 )
+            live_line = ""
+            if has_live:
+                _any_live = True
+                bk_txt = f" @ <b>{l_bk}</b>" if (l_bk and str(l_bk).strip() and str(l_bk).lower() != "nan") else ""
+                pin_txt = (
+                    f" | Pinnacle: <code>{float(l_pin):.2f}</code>"
+                    if (l_pin is not None and not pd.isna(l_pin) and float(l_pin) > 1.0)
+                    else ""
+                )
+                ev_txt = (
+                    f" | EV حي: <code>{float(l_ev):+.1f}%</code>"
+                    if (l_ev is not None and not pd.isna(l_ev))
+                    else ""
+                )
+                status_tag = "✅ <b>LIVE +EV</b>" if bool(l_act) else "⏳ <b>WAIT FOR ODDS</b>"
+                live_line = f"  📡 السعر الحي: <b>{float(l_best):.2f}</b>{bk_txt}{pin_txt}{ev_txt} | {status_tag}\n"
+
             msg += f"• <b>{d_str} | {league}</b>\n"
             msg += f"  ⚽ {home} vs {away}\n"
             msg += price_line
+            if live_line:
+                msg += live_line
             msg += f"  💼 حجم الرهان المقترح: <b>{stake:.2f}%</b>\n\n"
-        if _any_model:
+        if _any_live:
+            msg += (
+                "📡 <i>الأسعار الحية مدمجة من The Odds API v4: ادخل فقط عند شارة ✅ LIVE +EV "
+                "وتوفّر سعر ≥ الحد الأدنى (+6% هامش أمان).</i>\n"
+            )
+        elif _any_model:
             msg += (
                 "⚠️ <i>وضع الوسيط (بدون THE_ODDS_API_KEY): الحد الأدنى للسعر يشمل هامش أمان +6% "
                 "فوق السعر العادل المعايَر. لا تراهن بأقل من الحد الأدنى المذكور.</i>\n"

@@ -691,5 +691,128 @@ class TestMatchweekWindowWeeklyPnLAndArchiving(unittest.TestCase):
             self.assertIn("+1.00%", tg_header)
 
 
+class TestLiveOddsFetcherAndIntegration(unittest.TestCase):
+    """(h) Live Odds API v4: DNB replication, fuzzy team matching, fail-safe handling & Telegram/JSON enrichment."""
+
+    def test_dnb_replication_formula_and_bookmaker_extraction(self):
+        import live_odds_fetcher as lof
+
+        # Exact DNB Home = O_home * (1 - 1 / O_draw) = 2.00 * (1 - 1/4.00) = 1.50
+        self.assertAlmostEqual(lof.compute_dnb_replication_odds(2.00, 4.00), 1.50, places=3)
+        self.assertIsNone(lof.compute_dnb_replication_odds(None, 3.50))
+        self.assertIsNone(lof.compute_dnb_replication_odds(1.80, 1.0))
+
+        sample_events = [
+            {
+                "home_team": "Real Madrid",
+                "away_team": "Deportivo Alavés",
+                "commence_time": "2026-11-28T20:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "pinnacle",
+                        "title": "Pinnacle",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": "Real Madrid", "price": 1.40},
+                                    {"name": "Draw", "price": 5.00},
+                                    {"name": "Deportivo Alavés", "price": 8.00},
+                                ],
+                            },
+                            {
+                                "key": "totals",
+                                "outcomes": [
+                                    {"name": "Over", "point": 2.5, "price": 1.65},
+                                    {"name": "Under", "point": 2.5, "price": 2.25},
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "key": "onexbet",
+                        "title": "1xBet",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": "Real Madrid", "price": 1.48},
+                                    {"name": "Draw", "price": 5.00},
+                                    {"name": "Deportivo Alavés", "price": 7.50},
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+        parsed = lof.parse_odds_api_events(sample_events, "La Liga")
+        self.assertEqual(len(parsed), 1)
+        by_lg = {"La Liga": parsed}
+
+        # Diacritic & alias fuzzy matching: "Real Madrid" vs "Alaves" matches "Deportivo Alavés"
+        q = lof.match_live_odds_for_fixture("La Liga", "Real Madrid", "Alaves", "DNB Home", "HOME", by_lg)
+        # 1xBet DNB Home = 1.48 * (1 - 1/5) = 1.184 -> 1.18; Pinnacle = 1.40 * 0.8 = 1.12
+        self.assertAlmostEqual(q["live_best_odds"], 1.18, places=2)
+        self.assertEqual(q["live_best_bookmaker"], "1xBet")
+        self.assertAlmostEqual(q["live_pinnacle_odds"], 1.12, places=2)
+
+    def test_fuzzy_matching_diacritics_and_no_false_positives(self):
+        import live_odds_fetcher as lof
+
+        self.assertGreaterEqual(lof.team_similarity_score("Deportivo Alavés", "Alaves", "La Liga"), 0.90)
+        self.assertGreaterEqual(lof.team_similarity_score("Inter Milan", "Inter", "Serie A"), 0.90)
+        self.assertGreaterEqual(lof.team_similarity_score("Parma", "Parma Calcio 1913", "Serie A"), 0.90)
+        # Must NOT false-match distinct clubs sharing generic words like "Real" or "Manchester"
+        self.assertLess(lof.team_similarity_score("Real Madrid", "Real Betis", "La Liga"), 0.72)
+        self.assertLess(lof.team_similarity_score("Manchester City", "Manchester United", "EPL"), 0.72)
+
+    def test_fail_safe_missing_key_and_telegram_live_badges(self):
+        import live_odds_fetcher as lof
+        import telegram_alerts as ta
+
+        # Fail-safe with empty key returns {} gracefully without raising
+        self.assertEqual(lof.fetch_live_odds_for_leagues(api_key=""), {})
+
+        # Actionability & live EV math
+        act_yes = lof.evaluate_live_actionability(0.75, 1.41, 1.50)
+        self.assertTrue(act_yes["is_live_actionable"])
+        self.assertAlmostEqual(act_yes["live_ev_pct"], 12.5, places=2)
+
+        act_no = lof.evaluate_live_actionability(0.75, 1.41, 1.35)
+        self.assertFalse(act_no["is_live_actionable"])
+        self.assertAlmostEqual(act_no["live_ev_pct"], 1.25, places=2)
+
+        # Telegram report shows LIVE +EV and WAIT FOR ODDS badges
+        df_tg = pd.DataFrame([
+            {
+                "date": "2026-11-28 20:00:00", "league": "La Liga",
+                "home": "Real Madrid", "away": "Alaves", "market": "DNB Home",
+                "selection_side": "HOME", "p_calibrated": 0.85, "min_odds": 1.25,
+                "market_odds": 1.25, "price_type": "model", "stake_kelly": 0.02,
+                "live_best_odds": 1.32, "live_best_bookmaker": "Pinnacle",
+                "live_pinnacle_odds": 1.32, "live_ev_pct": 12.2, "is_live_actionable": True,
+            },
+            {
+                "date": "2026-11-29 17:00:00", "league": "Serie A",
+                "home": "Roma", "away": "Monza", "market": "DNB Home",
+                "selection_side": "HOME", "p_calibrated": 0.72, "min_odds": 1.47,
+                "market_odds": 1.47, "price_type": "model", "stake_kelly": 0.02,
+                "live_best_odds": 1.38, "live_best_bookmaker": "1xBet",
+                "live_pinnacle_odds": 1.35, "live_ev_pct": -0.64, "is_live_actionable": False,
+            },
+        ])
+        rep = ta.format_telegram_report(
+            {"settled_now": 0, "total_settled_all_time": 0, "wins": 0, "half_wins": 0, "losses": 0,
+             "hit_rate_percent": 0.0, "verified_settled_count": 0, "verified_profit_units": 0.0,
+             "verified_roi_percent": None, "pending_after": 2},
+            df_tg,
+        )
+        self.assertIn("LIVE +EV", rep)
+        self.assertIn("WAIT FOR ODDS", rep)
+        self.assertIn("Pinnacle", rep)
+        self.assertIn("1xBet", rep)
+
+
 if __name__ == "__main__":
     unittest.main()
