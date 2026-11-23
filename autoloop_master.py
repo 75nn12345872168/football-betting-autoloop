@@ -49,6 +49,8 @@ from settle_ledger_auto import (
     LEDGER,
     SUMMARY_FILE,
     determine_selection_side,
+    load_ledger_normalized,
+    save_ledger_df,
     settle_ledger,
 )
 from team_strength import DEFAULT_XI, TeamStrengthModel, get_model, time_decay_weight
@@ -651,8 +653,8 @@ class DataIngestionAgent:
         found = set(self.active_leagues)
         if self.ledger_path.exists():
             try:
-                lgs = pd.read_csv(self.ledger_path, usecols=["league"])["league"].dropna().astype(str).str.strip()
-                found.update(x for x in lgs if x)
+                ldf, _ = load_ledger_normalized(self.ledger_path)
+                found.update(x for x in ldf["league"].dropna().astype(str).str.strip() if x)
             except Exception:
                 pass
         return sorted(found)
@@ -660,10 +662,9 @@ class DataIngestionAgent:
     def _load_ledger_upcoming(self) -> pd.DataFrame:
         if not self.ledger_path.exists():
             return pd.DataFrame()
-        df = pd.read_csv(self.ledger_path, parse_dates=["date"])
-        for col, default in [("odds_source", ""), ("selection_side", ""), ("market_odds", np.nan)]:
-            if col not in df.columns:
-                df[col] = default
+        df, _ = load_ledger_normalized(self.ledger_path)
+        if df.empty:
+            return df
         mask = (
             (pd.to_datetime(df["date"]) >= self.window_start)
             & (pd.to_datetime(df["date"]) <= self.window_end)
@@ -1126,10 +1127,7 @@ def record_approved_bets_to_ledger(
     if not ledger_path.exists():
         return 0
 
-    df = pd.read_csv(ledger_path)
-    for col in ("selection_side", "odds_source", "p_calibrated", "min_odds"):
-        if col not in df.columns:
-            df[col] = ""
+    df, is_v4 = load_ledger_normalized(ledger_path)
 
     existing_keys = set()
     for _, r in df.iterrows():
@@ -1157,29 +1155,25 @@ def record_approved_bets_to_ledger(
         existing_keys.add(key)
         is_verified = str(r.get("odds_source", "")).strip() == "the-odds-api"
         new_rows.append({
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            "date": str(r["date"])[:19],
+            "date": pd.to_datetime(str(r["date"])[:19]),
+            "league": r["league"],
             "home": r["home"],
             "away": r["away"],
-            "pred_over": r["p_calibrated"] if "over" in str(r["market"]).lower() else np.nan,
-            "edge": r.get("edge", 0.0),
+            "market": r["market"],
+            "selection_side": r.get("selection_side", ""),
+            "p_calibrated": r["p_calibrated"],
+            "min_odds": r.get("min_odds", np.nan),
             "market_odds": r["market_odds"] if is_verified else np.nan,
             "stake": r.get("stake_kelly", 0.02),
             "status": "PENDING",
             "result": "",
             "profit": np.nan,
-            "league": r["league"],
-            "market": r["market"],
-            "pred": r["p_calibrated"],
-            "selection_side": r.get("selection_side", ""),
-            "odds_source": r.get("odds_source", ""),
-            "p_calibrated": r["p_calibrated"],
-            "min_odds": r.get("min_odds", np.nan),
+            "odds_source": r.get("odds_source", "") if is_verified else "",
         })
 
     if new_rows:
         out = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-        out.to_csv(ledger_path, index=False)
+        save_ledger_df(out, ledger_path, is_v4=is_v4)
     return len(new_rows)
 
 
@@ -1403,7 +1397,7 @@ def export_public_json_bundle(
     by_market: Dict[str, Dict[str, Any]] = {}
     if lpath.exists():
         try:
-            ldf = pd.read_csv(lpath)
+            ldf, _ = load_ledger_normalized(lpath)
             done = ldf[ldf["status"].isin(["WIN", "HALF WIN", "LOSS"])]
             for lg, g in done.groupby("league"):
                 w = int((g["status"] == "WIN").sum())
@@ -1434,7 +1428,7 @@ def export_public_json_bundle(
 
     perf_payload = {
         "generated_at": now_iso,
-        "engine_version": "v3-big5-verified",
+        "engine_version": "v4-alpha-promoted",
         "approved_production_pairs": [[lg, mk] for lg, mk in APPROVED_PRODUCTION_PAIRS],
         "settlement": summary,
         "breakdown_by_league": by_league,
@@ -1499,6 +1493,7 @@ def main() -> None:
     # Record approved picks to ledger for automatic future settlement
     recorded = record_approved_bets_to_ledger(df_opps)
     if recorded:
+        summary["pending_after"] = int(summary.get("pending_after", 0)) + int(recorded)
         print(f"[LEDGER] Recorded {recorded} new upcoming pick(s) for future settlement.")
 
     # Export full approved slate & verified performance to data/public/ (Next.js ready)

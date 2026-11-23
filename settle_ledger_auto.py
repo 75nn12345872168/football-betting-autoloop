@@ -38,6 +38,137 @@ from team_strength import get_model
 LEDGER = "paper_trading_ledger_2026.csv"
 SUMMARY_FILE = "ledger_settlement_summary.json"
 
+V4_LEDGER_COLUMNS: List[str] = [
+    "Date",
+    "League",
+    "HomeTeam",
+    "AwayTeam",
+    "Market",
+    "Selection",
+    "Calibrated_Prob",
+    "Min_Odds",
+    "Market_Odds",
+    "Stake_Pct",
+    "Result",
+    "PnL_Units",
+]
+
+
+def _parse_v4_result_cell(val: Any) -> Tuple[str, str]:
+    """Parse v4 `Result` cell ('PENDING', 'WIN', 'WIN (2-0)', 'PUSH (1-1)', etc.) -> (status, score)."""
+    raw = str(val or "").strip()
+    if not raw or raw.lower() == "nan" or raw.upper() == "PENDING":
+        return "PENDING", ""
+    up = raw.upper()
+    score = ""
+    if "(" in raw and ")" in raw:
+        score = raw[raw.find("(") + 1 : raw.rfind(")")].strip()
+    for st in ("HALF WIN", "WIN", "LOSS", "PUSH", "UNKNOWN_MARKET", "UNKNOWN_AH"):
+        if up.startswith(st):
+            return st, score
+    return "PENDING", ""
+
+
+def _format_v4_result_cell(status: Any, score: Any) -> str:
+    st = str(status or "PENDING").strip().upper()
+    if not st or st == "NAN":
+        return "PENDING"
+    sc = str(score or "").strip()
+    if st == "PENDING" or not sc or sc.lower() == "nan":
+        return st
+    return f"{st} ({sc})"
+
+
+def load_ledger_normalized(ledger_path: Path) -> Tuple[pd.DataFrame, bool]:
+    """
+    Load either the clean v4 12-column ledger CSV or a legacy lowercase ledger CSV
+    into a unified internal DataFrame, returning `(df, is_v4_schema)`.
+    """
+    raw = pd.read_csv(ledger_path)
+    is_v4 = "HomeTeam" in raw.columns or "Date" in raw.columns
+
+    if is_v4:
+        rows = []
+        for _, r in raw.iterrows():
+            st, sc = _parse_v4_result_cell(r.get("Result", "PENDING"))
+            mo = pd.to_numeric(r.get("Market_Odds"), errors="coerce")
+            has_real = pd.notna(mo) and float(mo) > 1.0
+            rows.append({
+                "date": pd.to_datetime(r.get("Date"), errors="coerce"),
+                "league": str(r.get("League", "La Liga")),
+                "home": str(r.get("HomeTeam", "")),
+                "away": str(r.get("AwayTeam", "")),
+                "market": str(r.get("Market", "")),
+                "selection_side": "" if pd.isna(r.get("Selection")) else str(r.get("Selection")).strip(),
+                "p_calibrated": pd.to_numeric(r.get("Calibrated_Prob"), errors="coerce"),
+                "min_odds": pd.to_numeric(r.get("Min_Odds"), errors="coerce"),
+                "market_odds": mo,
+                "stake": float(pd.to_numeric(r.get("Stake_Pct"), errors="coerce") or 0.0),
+                "status": st,
+                "result": sc,
+                "profit": pd.to_numeric(r.get("PnL_Units"), errors="coerce"),
+                "odds_source": "the-odds-api" if has_real else "",
+            })
+        cols = [
+            "date", "league", "home", "away", "market", "selection_side",
+            "p_calibrated", "min_odds", "market_odds", "stake",
+            "status", "result", "profit", "odds_source",
+        ]
+        df = pd.DataFrame(rows, columns=cols)
+    else:
+        df = raw.copy()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        for col, default in [
+            ("league", "La Liga"),
+            ("market", "Over 2.5"),
+            ("selection_side", ""),
+            ("odds_source", ""),
+            ("stake", 0.0),
+            ("market_odds", np.nan),
+            ("profit", np.nan),
+            ("result", ""),
+            ("status", "PENDING"),
+            ("p_calibrated", np.nan),
+            ("min_odds", np.nan),
+        ]:
+            if col not in df.columns:
+                df[col] = default
+
+    df["result"] = df["result"].fillna("").astype(object)
+    df["selection_side"] = df["selection_side"].fillna("").astype(object)
+    df["odds_source"] = df["odds_source"].fillna("").astype(object)
+    df["status"] = df["status"].fillna("PENDING").astype(object)
+    return df, is_v4
+
+
+def save_ledger_df(df: pd.DataFrame, ledger_path: Path, is_v4: bool = True) -> None:
+    """Persist normalized ledger DataFrame cleanly in v4 12-column schema (or legacy if requested)."""
+    if not is_v4:
+        df.to_csv(ledger_path, index=False)
+        return
+
+    out_rows = []
+    for _, r in df.iterrows():
+        dt_val = r.get("date")
+        dt_str = pd.to_datetime(dt_val).strftime("%Y-%m-%d %H:%M:%S") if pd.notna(dt_val) else ""
+        mo = pd.to_numeric(r.get("market_odds"), errors="coerce")
+        has_real = str(r.get("odds_source", "")).strip() == "the-odds-api" and pd.notna(mo) and float(mo) > 1.0
+        out_rows.append({
+            "Date": dt_str,
+            "League": str(r.get("league", "")),
+            "HomeTeam": str(r.get("home", "")),
+            "AwayTeam": str(r.get("away", "")),
+            "Market": str(r.get("market", "")),
+            "Selection": str(r.get("selection_side", "") or ""),
+            "Calibrated_Prob": "" if pd.isna(r.get("p_calibrated")) else round(float(r["p_calibrated"]), 4),
+            "Min_Odds": "" if pd.isna(r.get("min_odds")) else round(float(r["min_odds"]), 2),
+            "Market_Odds": round(float(mo), 3) if has_real else "",
+            "Stake_Pct": round(float(pd.to_numeric(r.get("stake"), errors="coerce") or 0.0), 4),
+            "Result": _format_v4_result_cell(r.get("status", "PENDING"), r.get("result", "")),
+            "PnL_Units": "" if pd.isna(r.get("profit")) else round(float(r["profit"]), 4),
+        })
+    pd.DataFrame(out_rows, columns=V4_LEDGER_COLUMNS).to_csv(ledger_path, index=False)
+
 # Fixed: each league maps to a LIST of fallback snapshot paths (never a bare str!)
 _LOCAL_FILES: Dict[str, List[str]] = {
     "La Liga": [
@@ -344,24 +475,7 @@ def settle_ledger(
         raise FileNotFoundError(f"Ledger not found: {ledger_path}")
 
     cut = (cutoff if cutoff is not None else pd.Timestamp.now()).normalize()
-    df = pd.read_csv(ledger_path, parse_dates=["date"])
-
-    for col, default in [
-        ("league", "La Liga"),
-        ("market", "Over 2.5"),
-        ("selection_side", ""),
-        ("odds_source", ""),
-        ("stake", 0.0),
-        ("market_odds", np.nan),
-        ("profit", np.nan),
-        ("result", ""),
-    ]:
-        if col not in df.columns:
-            df[col] = default
-
-    df["result"] = df["result"].astype(object)
-    df["selection_side"] = df["selection_side"].fillna("").astype(object)
-    df["odds_source"] = df["odds_source"].fillna("").astype(object)
+    df, is_v4 = load_ledger_normalized(ledger_path)
 
     leagues = tuple(sorted({str(x).strip() for x in df["league"].dropna().unique()} | set(BIG5_LEAGUES)))
     if live_records is None and use_live:
@@ -426,7 +540,7 @@ def settle_ledger(
     verified_staked = float(pd.to_numeric(verified_done["stake"], errors="coerce").fillna(0.0).sum()) if not verified_done.empty else 0.0
     verified_roi = round(verified_profit / verified_staked * 100.0, 2) if verified_staked > 0 else None
 
-    df.to_csv(ledger_path, index=False)
+    save_ledger_df(df, ledger_path, is_v4=is_v4)
     summary = {
         "cutoff": str(cut),
         "pending_before": int(len(pending)),

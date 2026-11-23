@@ -25,6 +25,7 @@ import pandas as pd
 import requests
 
 from live_data import ODDS_API_SPORTS, canonical_team_name
+from settle_ledger_auto import load_ledger_normalized, save_ledger_df
 
 LEDGER = "paper_trading_ledger_2026.csv"
 CONFIG = "odds_config.json"
@@ -187,16 +188,10 @@ def main() -> None:
     if not ledger.exists():
         sys.exit(f"ERR: {LEDGER} not found")
 
-    df = pd.read_csv(ledger, parse_dates=["date"])
-    if "odds_source" not in df.columns:
-        df["odds_source"] = ""
-    if "market_odds" not in df.columns:
-        df["market_odds"] = float("nan")
-    if "selection_side" not in df.columns:
-        df["selection_side"] = ""
+    df, is_v4 = load_ledger_normalized(ledger)
 
     session = requests.Session()
-    session.headers.update({"User-Agent": "autoloop/2.0"})
+    session.headers.update({"User-Agent": "autoloop/4.0"})
 
     attached = 0
     pending_mask = df["status"] == "PENDING"
@@ -227,7 +222,7 @@ def main() -> None:
                 attached += 1
         time.sleep(1.1)
 
-    df.to_csv(ledger, index=False)
+    save_ledger_df(df, ledger, is_v4=is_v4)
     verified = int(((df["status"] == "PENDING") & (df["odds_source"] == "the-odds-api")).sum())
     print(
         json.dumps(

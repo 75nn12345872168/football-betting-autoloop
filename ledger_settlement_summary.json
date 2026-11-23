@@ -1,26 +1,21 @@
 {
   "cutoff": "2026-11-23 00:00:00",
-  "pending_before": 99,
+  "pending_before": 0,
   "eligible_played": 0,
   "settled_now": 0,
   "result_not_found": 0,
   "ambiguous_average": 0,
-  "pending_after": 99,
-  "total_settled_all_time": 21,
-  "wins": 9,
-  "half_wins": 7,
-  "losses": 5,
+  "pending_after": 0,
+  "total_settled_all_time": 0,
+  "wins": 0,
+  "half_wins": 0,
+  "losses": 0,
   "pushes": 0,
-  "settled_units": 21,
-  "hit_rate_percent": 59.52,
+  "settled_units": 0,
+  "hit_rate_percent": 0.0,
   "verified_settled_count": 0,
   "verified_profit_units": 0.0,
   "verified_staked": 0.0,
   "verified_roi_percent": null,
-  "leagues": [
-    "Bundesliga",
-    "La Liga",
-    "Ligue 1",
-    "Serie A"
-  ]
+  "leagues": []
 }

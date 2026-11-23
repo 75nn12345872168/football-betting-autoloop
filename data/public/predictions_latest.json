@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-23T06:25:17.457820+00:00",
+  "generated_at": "2026-11-23T07:29:43.999578+00:00",
   "engine_version": "v4-alpha-promoted",
   "min_confidence_pct": 60.0,
   "dnb_min_confidence_pct": 70.0,
@@ -40,7 +40,7 @@
       "mu_home": 1.53,
       "mu_away": 1.233,
       "rho": -0.03,
-      "status": "fitted",
+      "status": "cached",
       "n": 760
     },
     "la liga": {
