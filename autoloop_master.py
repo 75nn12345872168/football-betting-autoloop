@@ -69,6 +69,7 @@ from telegram_alerts import (
     format_weekly_transparency_header,
     send_telegram_alert,
 )
+from x_publisher import publish_latest_closed_week
 
 PUBLIC_DATA_DIR = REPO_DIR / "data" / "public"
 BACKTEST_STATS_FILE = PUBLIC_DATA_DIR / "backtest_verified_stats.json"
@@ -1534,6 +1535,14 @@ def main() -> None:
     exported = export_public_json_bundle(df_opps, summary)
     print(f"[PUBLIC EXPORT] Updated: {[str(p.name) for p in exported.values()]}")
 
+    # Publish weekly transparency audit to X (Twitter) if a newly CLOSED_ARCHIVED matchweek exists (fail-safe)
+    x_publish_status: Dict[str, Any] = {"posted": False, "reason": "skipped"}
+    try:
+        x_publish_status = publish_latest_closed_week()
+    except Exception as e:
+        print(f"[X PUBLISHER WARN] unexpected error ({str(e)[:120]}) — continuing fail-safe.")
+        x_publish_status = {"posted": False, "reason": "exception"}
+
     # 5. Dedup Telegram notifications (so chat never gets duplicate alerts)
     sent_keys = _load_sent_keys()
     df_telegram, newly_sent_keys, skipped_sent = dedup_opportunities(df_opps, sent_keys)
@@ -1563,6 +1572,7 @@ def main() -> None:
         "rejected": df_rejected.astype(str).to_dict(orient="records") if not df_rejected.empty else [],
         "report_markdown": report_text,
         "telegram_dispatched": bool(sent_ok),
+        "x_publish": x_publish_status,
         "sent_fixture_keys": persisted_keys,
     }
     Path("autoloop_last_run.json").write_text(

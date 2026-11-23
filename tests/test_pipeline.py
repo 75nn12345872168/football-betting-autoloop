@@ -814,5 +814,143 @@ class TestLiveOddsFetcherAndIntegration(unittest.TestCase):
         self.assertIn("1xBet", rep)
 
 
+class TestXPublisherWeeklyAudit(unittest.TestCase):
+    """(i) X (Twitter) API v2 weekly publisher: <= 280 char format, idempotency & fail-safe credentials."""
+
+    def test_tweet_format_within_280_chars_and_required_fields(self):
+        import x_publisher as xp
+
+        wk = {
+            "matchweek_id": "MW-2026-11-17_to_2026-11-23",
+            "window_start": "2026-11-17",
+            "window_end": "2026-11-23",
+            "label": "2026-11-17 → 2026-11-23",
+            "archive_status": "CLOSED_ARCHIVED",
+            "wins": 6,
+            "half_wins": 0,
+            "losses": 2,
+            "conservative_min_odds_roi_pct": 14.29,
+            "flat_net_units": 1.85,
+            "closing_odds_roi_pct": 6.4,
+        }
+        tweet = xp.format_weekly_audit_tweet(wk)
+        self.assertLessEqual(len(tweet), 280, f"Tweet exceeded 280 chars: len={len(tweet)}\n{tweet}")
+        self.assertIn("AlphaPitch v4 · Weekly Audit", tweet)
+        self.assertIn("CLOSED_ARCHIVED", tweet)
+        self.assertIn("6W - 0HW - 2L", tweet)
+        self.assertIn("+14.29%", tweet)
+        self.assertIn("+1.85u", tweet)
+        self.assertIn("+6.40%", tweet)
+        self.assertIn("https://alpha-pitch-terminal.vercel.app", tweet)
+        self.assertIn("#SportsQuant", tweet)
+
+    def test_idempotency_and_active_week_skip(self):
+        import os
+        from unittest.mock import patch
+        import x_publisher as xp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            arch_path = tmp_dir / "weekly_archive.json"
+            state_path = tmp_dir / "x_posted_weeks.json"
+
+            # 1. Only ACTIVE week present -> must NOT post
+            arch_path.write_text(json.dumps({
+                "weeks": [{
+                    "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+                    "window_start": "2026-11-24",
+                    "window_end": "2026-11-30",
+                    "label": "2026-11-24 → 2026-11-30",
+                    "archive_status": "ACTIVE",
+                    "wins": 0, "half_wins": 0, "losses": 0,
+                    "conservative_min_odds_roi_pct": None,
+                    "flat_net_units": 0.0,
+                    "closing_odds_roi_pct": None,
+                }]
+            }), encoding="utf-8")
+            self.assertIsNone(xp.find_next_unposted_closed_week(arch_path, state_path))
+
+            # 2. Add a CLOSED_ARCHIVED week -> posts ONCE via mocked OAuth1Session, then skips on 2nd run
+            arch_path.write_text(json.dumps({
+                "weeks": [
+                    {
+                        "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+                        "window_start": "2026-11-24", "window_end": "2026-11-30",
+                        "archive_status": "ACTIVE",
+                    },
+                    {
+                        "matchweek_id": "MW-2026-11-17_to_2026-11-23",
+                        "window_start": "2026-11-17", "window_end": "2026-11-23",
+                        "label": "2026-11-17 → 2026-11-23",
+                        "archive_status": "CLOSED_ARCHIVED",
+                        "wins": 5, "half_wins": 1, "losses": 1,
+                        "conservative_min_odds_roi_pct": 18.5,
+                        "flat_net_units": 2.1,
+                        "closing_odds_roi_pct": None,
+                    },
+                ]
+            }), encoding="utf-8")
+
+            calls = []
+
+            class _FakeResp:
+                status_code = 201
+                text = '{"data":{"id":"1999999999999"}}'
+                def json(self):
+                    return {"data": {"id": "1999999999999"}}
+
+            class _FakeOAuth:
+                def __init__(self, *args, **kwargs):
+                    pass
+                def post(self, url, json=None, timeout=20):
+                    calls.append((url, json))
+                    return _FakeResp()
+
+            fake_env = {
+                "X_API_KEY": "k1",
+                "X_API_SECRET": "k2",
+                "X_ACCESS_TOKEN": "k3",
+                "X_ACCESS_TOKEN_SECRET": "k4",
+            }
+            with patch.dict(os.environ, fake_env, clear=False):
+                r1 = xp.publish_latest_closed_week(arch_path, state_path, oauth_session_cls=_FakeOAuth)
+                self.assertTrue(r1["posted"])
+                self.assertEqual(r1["tweet_id"], "1999999999999")
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][0], "https://api.twitter.com/2/tweets")
+
+                # Second call MUST be idempotent (no duplicate tweet!)
+                r2 = xp.publish_latest_closed_week(arch_path, state_path, oauth_session_cls=_FakeOAuth)
+                self.assertFalse(r2["posted"])
+                self.assertEqual(r2["reason"], "no_unposted_closed_week")
+                self.assertEqual(len(calls), 1)
+
+            # Verify persisted state file
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIn("MW-2026-11-17_to_2026-11-23", saved["posted"])
+            self.assertEqual(saved["posted"]["MW-2026-11-17_to_2026-11-23"]["tweet_id"], "1999999999999")
+
+    def test_fail_safe_when_x_credentials_missing_or_http_error(self):
+        import os
+        from unittest.mock import patch
+        import x_publisher as xp
+
+        with patch.dict(os.environ, {"X_API_KEY": "", "X_API_SECRET": "", "X_ACCESS_TOKEN": "", "X_ACCESS_TOKEN_SECRET": ""}, clear=False):
+            self.assertIsNone(xp.post_tweet("test fail safe"))
+
+        class _ErrResp:
+            status_code = 429
+            text = "Too Many Requests"
+
+        class _ErrOAuth:
+            def __init__(self, *args, **kwargs):
+                pass
+            def post(self, url, json=None, timeout=20):
+                return _ErrResp()
+
+        with patch.dict(os.environ, {"X_API_KEY": "a", "X_API_SECRET": "b", "X_ACCESS_TOKEN": "c", "X_ACCESS_TOKEN_SECRET": "d"}, clear=False):
+            self.assertIsNone(xp.post_tweet("test 429", oauth_session_cls=_ErrOAuth))
+
+
 if __name__ == "__main__":
     unittest.main()

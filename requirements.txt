@@ -1,5 +1,6 @@
 pandas
 requests
+requests-oauthlib
 scikit-learn
 joblib
 scipy
