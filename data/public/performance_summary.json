@@ -1,6 +1,8 @@
 {
-  "generated_at": "2026-11-23T07:57:53.371693+00:00",
+  "generated_at": "2026-11-23T08:23:04.874968+00:00",
   "engine_version": "v4-alpha-promoted",
+  "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+  "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
   "approved_production_pairs": [
     [
       "EPL",
@@ -27,6 +29,66 @@
       "Over 2.5"
     ]
   ],
+  "transparency_banner": {
+    "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
+    "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+    "current_week": {
+      "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+      "window_start": "2026-11-24",
+      "window_end": "2026-11-30",
+      "window_start_utc": "2026-11-24T00:00:00Z",
+      "window_end_utc": "2026-11-30T23:59:59Z",
+      "label": "2026-11-24 → 2026-11-30",
+      "closed_at": null,
+      "archive_status": "ACTIVE",
+      "status": "PENDING",
+      "total_picks": 8,
+      "settled_picks": 0,
+      "pending_picks": 8,
+      "wins": 0,
+      "half_wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "hit_rate_percent": 0.0,
+      "total_staked_pct": 0.0,
+      "conservative_min_odds_roi_pct": null,
+      "kelly_bankroll_change_pct": 0.0,
+      "flat_net_units": 0.0,
+      "flat_roi_pct": null,
+      "closing_odds_roi_pct": null,
+      "closing_odds_sample_n": 0
+    },
+    "last_closed_week": null,
+    "closed_weeks_count": 0
+  },
+  "weekly_performance": [
+    {
+      "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+      "window_start": "2026-11-24",
+      "window_end": "2026-11-30",
+      "window_start_utc": "2026-11-24T00:00:00Z",
+      "window_end_utc": "2026-11-30T23:59:59Z",
+      "label": "2026-11-24 → 2026-11-30",
+      "closed_at": null,
+      "archive_status": "ACTIVE",
+      "status": "PENDING",
+      "total_picks": 8,
+      "settled_picks": 0,
+      "pending_picks": 8,
+      "wins": 0,
+      "half_wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "hit_rate_percent": 0.0,
+      "total_staked_pct": 0.0,
+      "conservative_min_odds_roi_pct": null,
+      "kelly_bankroll_change_pct": 0.0,
+      "flat_net_units": 0.0,
+      "flat_roi_pct": null,
+      "closing_odds_roi_pct": null,
+      "closing_odds_sample_n": 0
+    }
+  ],
   "settlement": {
     "cutoff": "2026-11-23 00:00:00",
     "pending_before": 8,
@@ -50,7 +112,41 @@
       "EPL",
       "La Liga",
       "Serie A"
-    ]
+    ],
+    "transparency_banner": {
+      "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
+      "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+      "current_week": {
+        "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+        "window_start": "2026-11-24",
+        "window_end": "2026-11-30",
+        "window_start_utc": "2026-11-24T00:00:00Z",
+        "window_end_utc": "2026-11-30T23:59:59Z",
+        "label": "2026-11-24 → 2026-11-30",
+        "closed_at": null,
+        "archive_status": "ACTIVE",
+        "status": "PENDING",
+        "total_picks": 8,
+        "settled_picks": 0,
+        "pending_picks": 8,
+        "wins": 0,
+        "half_wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "hit_rate_percent": 0.0,
+        "total_staked_pct": 0.0,
+        "conservative_min_odds_roi_pct": null,
+        "kelly_bankroll_change_pct": 0.0,
+        "flat_net_units": 0.0,
+        "flat_roi_pct": null,
+        "closing_odds_roi_pct": null,
+        "closing_odds_sample_n": 0
+      },
+      "last_closed_week": null,
+      "closed_weeks_count": 0
+    },
+    "weekly_summary_count": 1,
+    "closed_weeks_count": 0
   },
   "breakdown_by_league": {},
   "breakdown_by_market": {}

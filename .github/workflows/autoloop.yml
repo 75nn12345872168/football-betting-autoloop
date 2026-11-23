@@ -2,7 +2,8 @@ name: Master Autoloop - Big-5 Verified Engine
 
 on:
   schedule:
-    - cron: '0 9 * * 1'   # Monday 09:00 UTC = Settlement
+    - cron: '0 9 * * 1'   # Monday 09:00 UTC = Weekend Settlement
+    - cron: '0 6 * * 2'   # Tuesday 06:00 UTC = Close & Archive Matchweek Window (post-Monday fixtures)
     - cron: '0 18 * * 5'  # Friday 18:00 UTC = Fetch Weekend
   workflow_dispatch:
     inputs:
@@ -70,6 +71,6 @@ jobs:
         run: |
           git config --global user.name "hermes-bot"
           git config --global user.email "hermes@bot.local"
-          git add paper_trading_ledger_2026.csv ledger_settlement_summary.json la_liga_matches_2018_2026.csv live_matches_ligue1.csv data/historical_big5_odds.csv data/public/ telegram_last_report.txt autoloop_last_run.json || true
+          git add paper_trading_ledger_2026.csv ledger_settlement_summary.json la_liga_matches_2018_2026.csv live_matches_ligue1.csv data/historical_big5_odds.csv data/public/ data/archive/ telegram_last_report.txt autoloop_last_run.json || true
           git diff --staged --quiet || git commit -m "auto: update ledger, settlement & public web json $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push || echo "No push needed or no remote"

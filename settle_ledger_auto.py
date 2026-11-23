@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,6 +38,10 @@ from team_strength import get_model
 
 LEDGER = "paper_trading_ledger_2026.csv"
 SUMMARY_FILE = "ledger_settlement_summary.json"
+ARCHIVE_WEEKLY_FILE = REPO_DIR / "data" / "archive" / "weekly_archive.json"
+PUBLIC_WEEKLY_FILE = REPO_DIR / "data" / "public" / "weekly_archive.json"
+HISTORICAL_ODDS_FILE = REPO_DIR / "data" / "historical_big5_odds.csv"
+CONSERVATIVE_SAFETY_MARGIN = 1.06
 
 V4_LEDGER_COLUMNS: List[str] = [
     "Date",
@@ -462,6 +467,494 @@ def settle_row(
     return row
 
 
+# ==============================================================================
+# MATCHWEEK WINDOW (TUE 00:00 UTC -> MON 23:59 UTC), WEEKLY P&L & ARCHIVING
+# ==============================================================================
+
+def get_matchweek_window(dt: Any) -> Dict[str, str]:
+    """
+    Map any kickoff timestamp to its unified European Football Matchweek Window:
+      Tuesday 00:00:00 UTC -> Monday 23:59:59 UTC.
+    This guarantees Monday night fixtures stay grouped with their weekend slate.
+    """
+    ts = pd.to_datetime(dt, errors="coerce")
+    if pd.isna(ts):
+        ts = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    elif getattr(ts, "tzinfo", None) is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+
+    # Python weekday(): Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    days_since_tuesday = (int(ts.weekday()) - 1) % 7
+    win_start = ts.normalize() - pd.Timedelta(days=days_since_tuesday)
+    win_end = win_start + pd.Timedelta(days=6)
+    start_str = win_start.strftime("%Y-%m-%d")
+    end_str = win_end.strftime("%Y-%m-%d")
+    return {
+        "matchweek_id": f"MW-{start_str}_to_{end_str}",
+        "window_start": start_str,
+        "window_end": end_str,
+        "window_start_utc": f"{start_str}T00:00:00Z",
+        "window_end_utc": f"{end_str}T23:59:59Z",
+        "label": f"{start_str} → {end_str}",
+    }
+
+
+def _bet_pnl_multiplier(status: str, odds: Optional[float]) -> Optional[float]:
+    """Return net P&L per 1.0 unit staked for a settled bet at decimal `odds`."""
+    st = str(status or "").strip().upper()
+    if st == "PUSH":
+        return 0.0
+    if odds is None or pd.isna(odds) or float(odds) <= 1.0:
+        return None
+    dec = float(odds)
+    if st == "WIN":
+        return dec - 1.0
+    if st == "HALF WIN":
+        return 0.5 * (dec - 1.0)
+    if st == "LOSS":
+        return -1.0
+    return None
+
+
+def _extract_closing_odds_for_market(
+    odds_rec: Dict[str, Any], market: str, selection_side: str = ""
+) -> Optional[float]:
+    """
+    Extract real closing decimal odds from football-data.co.uk record.
+    Uses Pinnacle Closing (PSCH/PSCD/PSCA/PC_over25/PC_under25) with clean
+    fallback to Pinnacle Opening (PSH/PSD/PSA) or Best Market (MaxH/MaxD/MaxA).
+    For DNB markets, applies exact replication: O_DNB = O_side * (1 - 1 / O_draw).
+    """
+    def _num(*keys: str) -> Optional[float]:
+        for k in keys:
+            v = pd.to_numeric(odds_rec.get(k), errors="coerce")
+            if pd.notna(v) and float(v) > 1.0:
+                return float(v)
+        return None
+
+    mk = str(market or "").strip().lower()
+    side = str(selection_side or "").strip().upper()
+
+    if "dnb" in mk or "draw no bet" in mk or "ah 0" in mk:
+        is_away = ("away" in mk) or (side == "AWAY")
+        o_side = _num("PSCA", "PSA", "MaxA") if is_away else _num("PSCH", "PSH", "MaxH")
+        o_draw = _num("PSCD", "PSD", "MaxD")
+        if o_side and o_draw and o_draw > 1.0:
+            rep = o_side * (1.0 - (1.0 / o_draw))
+            return round(rep, 3) if rep > 1.0 else None
+        return None
+    if "over" in mk and "2.5" in mk:
+        o = _num("PC_over25", "PC>2.5", "P_over25", "Max_over25", "Max>2.5")
+        return round(o, 3) if o else None
+    if "under" in mk and "2.5" in mk:
+        o = _num("PC_under25", "PC<2.5", "P_under25", "Max_under25", "Max<2.5")
+        return round(o, 3) if o else None
+    if "1x2" in mk or mk in ("home win", "away win", "draw"):
+        if "away" in mk or side == "AWAY":
+            o = _num("PSCA", "PSA", "MaxA")
+        elif "draw" in mk or side == "DRAW":
+            o = _num("PSCD", "PSD", "MaxD")
+        else:
+            o = _num("PSCH", "PSH", "MaxH")
+        return round(o, 3) if o else None
+    return None
+
+
+def build_closing_odds_index(
+    historical_path: Path = HISTORICAL_ODDS_FILE,
+    extra_records: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[Tuple[str, str, str], List[Tuple[pd.Timestamp, Dict[str, Any]]]]:
+    """
+    Build lookup index `(league, canonical_home, canonical_away) -> [(date, odds_dict)]`
+    from `data/historical_big5_odds.csv` (sourced from football-data.co.uk) and
+    optional extra records.
+    """
+    index: Dict[Tuple[str, str, str], Dict[str, Tuple[pd.Timestamp, Dict[str, Any]]]] = {}
+    odds_cols = (
+        "PSCH", "PSCD", "PSCA", "PC_over25", "PC_under25",
+        "PSH", "PSD", "PSA", "P_over25", "P_under25",
+        "MaxH", "MaxD", "MaxA", "Max_over25", "Max_under25",
+        "PC>2.5", "PC<2.5", "Max>2.5", "Max<2.5",
+    )
+
+    if historical_path and historical_path.exists():
+        try:
+            df = pd.read_csv(historical_path)
+            present_cols = [c for c in odds_cols if c in df.columns]
+            if present_cols and all(c in df.columns for c in ("league", "date", "home", "away")):
+                # Focus on recent seasons (2024+) for fast lookup during settlement
+                df["_dt"] = pd.to_datetime(df["date"], errors="coerce")
+                recent = df[df["_dt"] >= pd.Timestamp("2024-07-01")]
+                for _, r in recent.iterrows():
+                    lg = str(r["league"]).strip()
+                    h = canonical_team_name(r["home"], lg)
+                    a = canonical_team_name(r["away"], lg)
+                    dt = r["_dt"]
+                    if pd.isna(dt) or not lg or not h or not a:
+                        continue
+                    dk = dt.strftime("%Y-%m-%d")
+                    rec = {c: r[c] for c in present_cols if pd.notna(r[c])}
+                    if rec:
+                        index.setdefault((lg, h, a), {})[dk] = (dt, rec)
+        except Exception:
+            pass
+
+    if extra_records:
+        for m in extra_records:
+            lg = str(m.get("league", "")).strip()
+            h = canonical_team_name(m.get("home", ""), lg)
+            a = canonical_team_name(m.get("away", ""), lg)
+            dt = pd.to_datetime(m.get("date_key") or m.get("date"), errors="coerce")
+            if pd.isna(dt) or not lg or not h or not a:
+                continue
+            rec = {c: m[c] for c in odds_cols if c in m and pd.notna(m[c])}
+            if rec:
+                dk = dt.strftime("%Y-%m-%d")
+                index.setdefault((lg, h, a), {})[dk] = (dt, rec)
+
+    return {k: list(v.values()) for k, v in index.items()}
+
+
+def lookup_closing_odds(
+    league: str,
+    home: str,
+    away: str,
+    fixture_date: Any,
+    market: str,
+    selection_side: str,
+    closing_index: Optional[Dict[Tuple[str, str, str], List[Tuple[pd.Timestamp, Dict[str, Any]]]]],
+    max_date_diff_days: int = 3,
+) -> Optional[float]:
+    if not closing_index:
+        return None
+    h = canonical_team_name(home, league)
+    a = canonical_team_name(away, league)
+    target = pd.to_datetime(fixture_date, errors="coerce")
+    if pd.isna(target):
+        return None
+    target_day = target.normalize()
+    best_rec = None
+    best_diff = max_date_diff_days + 1
+    for dt, rec in closing_index.get((league, h, a), []):
+        diff = abs((dt.normalize() - target_day).days)
+        if diff < best_diff:
+            best_diff = diff
+            best_rec = rec
+    if best_rec is None or best_diff > max_date_diff_days:
+        return None
+    return _extract_closing_odds_for_market(best_rec, market, selection_side)
+
+
+def _compute_week_metrics_from_picks(picks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Compute weekly transparency metrics from normalized pick dicts:
+      1. conservative_min_odds_roi_pct & kelly_bankroll_change_pct (Kelly-weighted on Min_Odds floor)
+      2. flat_net_units & flat_roi_pct (flat 1u on Min_Odds floor for backtest parity)
+      3. closing_odds_roi_pct (auto-populated when football-data.co.uk closing odds exist)
+    """
+    settled_statuses = {"WIN", "HALF WIN", "LOSS", "PUSH"}
+    total_picks = len(picks)
+    wins = sum(1 for p in picks if p["status"] == "WIN")
+    half_wins = sum(1 for p in picks if p["status"] == "HALF WIN")
+    losses = sum(1 for p in picks if p["status"] == "LOSS")
+    pushes = sum(1 for p in picks if p["status"] == "PUSH")
+    settled_picks = sum(1 for p in picks if p["status"] in settled_statuses)
+    pending_picks = sum(1 for p in picks if p["status"] == "PENDING")
+
+    decisive = wins + half_wins + losses
+    hit_rate_pct = round(((wins + 0.5 * half_wins) / decisive) * 100.0, 2) if decisive > 0 else 0.0
+
+    kelly_pnl_frac = 0.0
+    kelly_staked_frac = 0.0
+    flat_net_units = 0.0
+    flat_counted = 0
+
+    closing_kelly_pnl = 0.0
+    closing_kelly_staked = 0.0
+    closing_sample_n = 0
+
+    for p in picks:
+        st = p["status"]
+        if st not in settled_statuses:
+            p["conservative_kelly_pnl_pct"] = None
+            p["flat_pnl_units"] = None
+            continue
+
+        stake_pct = float(p.get("stake_pct") or 0.0)
+        if stake_pct <= 0.0:
+            stake_pct = 0.02
+
+        # Conservative floor odds: verified market_odds if recorded, otherwise Min_Odds floor
+        floor_odds = p.get("market_odds") if (p.get("market_odds") and float(p["market_odds"]) > 1.0) else p.get("min_odds")
+        if (floor_odds is None or float(floor_odds) <= 1.0) and p.get("calibrated_prob"):
+            prob = float(p["calibrated_prob"])
+            if 0.01 <= prob <= 0.99:
+                floor_odds = round(CONSERVATIVE_SAFETY_MARGIN / prob, 2)
+
+        mult = _bet_pnl_multiplier(st, floor_odds)
+        if mult is not None:
+            bet_kelly_pnl = stake_pct * mult
+            kelly_pnl_frac += bet_kelly_pnl
+            kelly_staked_frac += stake_pct
+            flat_net_units += mult
+            flat_counted += 1
+            p["conservative_kelly_pnl_pct"] = round(bet_kelly_pnl * 100.0, 3)
+            p["flat_pnl_units"] = round(mult, 4)
+        else:
+            p["conservative_kelly_pnl_pct"] = None
+            p["flat_pnl_units"] = None
+
+        c_odds = p.get("closing_odds")
+        if c_odds is not None and float(c_odds) > 1.0:
+            c_mult = _bet_pnl_multiplier(st, float(c_odds))
+            if c_mult is not None:
+                closing_kelly_pnl += stake_pct * c_mult
+                closing_kelly_staked += stake_pct
+                closing_sample_n += 1
+
+    kelly_bankroll_change_pct = round(kelly_pnl_frac * 100.0, 2)
+    conservative_roi_pct = (
+        round((kelly_pnl_frac / kelly_staked_frac) * 100.0, 2)
+        if kelly_staked_frac > 0
+        else None
+    )
+    flat_roi_pct = (
+        round((flat_net_units / flat_counted) * 100.0, 2)
+        if flat_counted > 0
+        else None
+    )
+    closing_roi_pct = (
+        round((closing_kelly_pnl / closing_kelly_staked) * 100.0, 2)
+        if closing_kelly_staked > 0
+        else None
+    )
+
+    if settled_picks == 0:
+        pnl_status = "PENDING"
+    elif kelly_bankroll_change_pct > 0:
+        pnl_status = "PROFIT"
+    elif kelly_bankroll_change_pct < 0:
+        pnl_status = "LOSS"
+    else:
+        pnl_status = "BREAKEVEN"
+
+    archive_status = "CLOSED_ARCHIVED" if (total_picks > 0 and pending_picks == 0) else "ACTIVE"
+
+    return {
+        "archive_status": archive_status,
+        "status": pnl_status,
+        "total_picks": total_picks,
+        "settled_picks": settled_picks,
+        "pending_picks": pending_picks,
+        "wins": wins,
+        "half_wins": half_wins,
+        "losses": losses,
+        "pushes": pushes,
+        "hit_rate_percent": hit_rate_pct,
+        "total_staked_pct": round(kelly_staked_frac * 100.0, 2),
+        "conservative_min_odds_roi_pct": conservative_roi_pct,
+        "kelly_bankroll_change_pct": kelly_bankroll_change_pct,
+        "flat_net_units": round(flat_net_units, 4),
+        "flat_roi_pct": flat_roi_pct,
+        "closing_odds_roi_pct": closing_roi_pct,
+        "closing_odds_sample_n": closing_sample_n,
+    }
+
+
+def build_weekly_transparency_and_archive(
+    df: pd.DataFrame,
+    archive_path: Path = ARCHIVE_WEEKLY_FILE,
+    public_archive_path: Optional[Path] = PUBLIC_WEEKLY_FILE,
+    closing_index: Optional[Dict[Tuple[str, str, str], List[Tuple[pd.Timestamp, Dict[str, Any]]]]] = None,
+    reference_now: Optional[pd.Timestamp] = None,
+    persist: bool = True,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Group ledger rows by Matchweek Window (Tue 00:00 UTC -> Mon 23:59 UTC),
+    compute Conservative Floor + Kelly Weighted + Flat 1u + Closing Odds ROI,
+    permanently archive any completed matchweek as `"CLOSED_ARCHIVED"`, and
+    build both `weekly_archive` payload and `transparency_banner` summary.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ref_ts = reference_now if reference_now is not None else pd.Timestamp.now(tz="UTC").tz_localize(None)
+    current_mw_meta = get_matchweek_window(ref_ts)
+
+    if closing_index is None:
+        closing_index = build_closing_odds_index()
+
+    # 1. Load previously permanently archived CLOSED_ARCHIVED weeks (never lost!)
+    persisted_closed: Dict[str, Dict[str, Any]] = {}
+    if archive_path and archive_path.exists():
+        try:
+            raw_arch = json.loads(archive_path.read_text(encoding="utf-8"))
+            for wk in raw_arch.get("weeks", []):
+                if isinstance(wk, dict) and wk.get("archive_status") == "CLOSED_ARCHIVED" and wk.get("matchweek_id"):
+                    persisted_closed[str(wk["matchweek_id"])] = wk
+        except Exception:
+            pass
+
+    # 2. Group ledger rows by Matchweek Window
+    grouped_picks: Dict[str, Tuple[Dict[str, str], List[Dict[str, Any]]]] = {}
+    if df is not None and not df.empty:
+        for _, r in df.iterrows():
+            dt_val = pd.to_datetime(r.get("date"), errors="coerce")
+            if pd.isna(dt_val):
+                continue
+            mw = get_matchweek_window(dt_val)
+            mw_id = mw["matchweek_id"]
+            league = str(r.get("league", "")).strip()
+            home = canonical_team_name(r.get("home", ""), league)
+            away = canonical_team_name(r.get("away", ""), league)
+            market = str(r.get("market", "")).strip()
+            side = str(r.get("selection_side", "") or "").strip().upper()
+            p_cal = pd.to_numeric(r.get("p_calibrated"), errors="coerce")
+            min_o = pd.to_numeric(r.get("min_odds"), errors="coerce")
+            mkt_o = pd.to_numeric(r.get("market_odds"), errors="coerce")
+            has_real = str(r.get("odds_source", "")).strip() == "the-odds-api" and pd.notna(mkt_o) and float(mkt_o) > 1.0
+            stake_pct = float(pd.to_numeric(r.get("stake"), errors="coerce") or 0.0)
+            status = str(r.get("status", "PENDING") or "PENDING").strip().upper()
+            score = str(r.get("result", "") or "").strip()
+
+            c_odds = lookup_closing_odds(
+                league, home, away, dt_val, market, side, closing_index=closing_index
+            )
+
+            pick_rec = {
+                "date": dt_val.strftime("%Y-%m-%d %H:%M:%S"),
+                "league": league,
+                "home": home,
+                "away": away,
+                "market": market,
+                "selection_side": side,
+                "calibrated_prob": None if pd.isna(p_cal) else round(float(p_cal), 4),
+                "min_odds": None if pd.isna(min_o) else round(float(min_o), 2),
+                "market_odds": round(float(mkt_o), 3) if has_real else None,
+                "closing_odds": c_odds,
+                "stake_pct": round(stake_pct, 4),
+                "status": status,
+                "score": score,
+            }
+            if mw_id not in grouped_picks:
+                grouped_picks[mw_id] = (mw, [])
+            grouped_picks[mw_id][1].append(pick_rec)
+
+    # 3. Merge live grouped weeks with permanently archived closed weeks
+    merged_weeks: Dict[str, Dict[str, Any]] = {}
+
+    # Re-enrich previously archived weeks with closing odds if newly available
+    for mw_id, old_wk in persisted_closed.items():
+        picks = [dict(p) for p in old_wk.get("picks", [])]
+        for p in picks:
+            if p.get("closing_odds") is None:
+                c_odds = lookup_closing_odds(
+                    p.get("league", ""),
+                    p.get("home", ""),
+                    p.get("away", ""),
+                    p.get("date"),
+                    p.get("market", ""),
+                    p.get("selection_side", ""),
+                    closing_index=closing_index,
+                )
+                if c_odds is not None:
+                    p["closing_odds"] = c_odds
+        metrics = _compute_week_metrics_from_picks(picks)
+        metrics["archive_status"] = "CLOSED_ARCHIVED"
+        merged_weeks[mw_id] = {
+            "matchweek_id": mw_id,
+            "window_start": old_wk.get("window_start", ""),
+            "window_end": old_wk.get("window_end", ""),
+            "window_start_utc": old_wk.get("window_start_utc", ""),
+            "window_end_utc": old_wk.get("window_end_utc", ""),
+            "label": old_wk.get("label", mw_id),
+            "closed_at": old_wk.get("closed_at") or now_iso,
+            **metrics,
+            "picks": picks,
+        }
+
+    # Apply ledger weeks (overrides/creates active weeks, closes completed weeks)
+    for mw_id, (mw, picks) in grouped_picks.items():
+        picks_sorted = sorted(picks, key=lambda x: (x["date"], x["league"], x["home"]))
+        metrics = _compute_week_metrics_from_picks(picks_sorted)
+        prior_closed_at = persisted_closed.get(mw_id, {}).get("closed_at")
+        closed_at = (
+            prior_closed_at or now_iso
+            if metrics["archive_status"] == "CLOSED_ARCHIVED"
+            else None
+        )
+        merged_weeks[mw_id] = {
+            **mw,
+            "closed_at": closed_at,
+            **metrics,
+            "picks": picks_sorted,
+        }
+
+    # Sort weeks newest-first by window_start
+    sorted_weeks = sorted(
+        merged_weeks.values(),
+        key=lambda w: str(w.get("window_start", "")),
+        reverse=True,
+    )
+    closed_weeks = [w for w in sorted_weeks if w.get("archive_status") == "CLOSED_ARCHIVED"]
+    active_weeks = [w for w in sorted_weeks if w.get("archive_status") != "CLOSED_ARCHIVED"]
+
+    # Determine current week for the transparency banner:
+    # Prefer the active matchweek (nearest live slate), else current calendar matchweek, else empty stub
+    if active_weeks:
+        # Pick the active week containing `ref_ts`, or the earliest upcoming active week, or latest active week
+        cur_match = next(
+            (w for w in active_weeks if w["matchweek_id"] == current_mw_meta["matchweek_id"]),
+            None,
+        )
+        current_week_full = cur_match or active_weeks[0]
+    elif current_mw_meta["matchweek_id"] in merged_weeks:
+        current_week_full = merged_weeks[current_mw_meta["matchweek_id"]]
+    else:
+        current_week_full = {
+            **current_mw_meta,
+            "closed_at": None,
+            **_compute_week_metrics_from_picks([]),
+            "picks": [],
+        }
+
+    last_closed_full = closed_weeks[0] if closed_weeks else None
+
+    def _compact_week(w: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not w:
+            return None
+        return {k: v for k, v in w.items() if k != "picks"}
+
+    transparency_banner = {
+        "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
+        "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+        "current_week": _compact_week(current_week_full),
+        "last_closed_week": _compact_week(last_closed_full),
+        "closed_weeks_count": len(closed_weeks),
+    }
+
+    weekly_archive_payload = {
+        "generated_at": now_iso,
+        "engine_version": "v4-alpha-promoted",
+        "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+        "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
+        "total_weeks": len(sorted_weeks),
+        "closed_weeks_count": len(closed_weeks),
+        "active_weeks_count": len(active_weeks),
+        "transparency_banner": transparency_banner,
+        "weeks": sorted_weeks,
+    }
+
+    if persist:
+        for out_p in (archive_path, public_archive_path):
+            if out_p is not None:
+                out_p.parent.mkdir(parents=True, exist_ok=True)
+                out_p.write_text(
+                    json.dumps(weekly_archive_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+    return weekly_archive_payload, transparency_banner
+
+
 def settle_ledger(
     ledger_path: Path = Path(LEDGER),
     summary_path: Path = Path(SUMMARY_FILE),
@@ -469,8 +962,11 @@ def settle_ledger(
     live_records: Optional[List[Dict[str, Any]]] = None,
     use_live: bool = True,
     sync_history: bool = True,
+    archive_path: Optional[Path] = None,
+    public_archive_path: Optional[Path] = None,
+    persist_archive: bool = True,
 ) -> Dict[str, Any]:
-    """Run settlement over `ledger_path`, save updated CSV + summary JSON, and return summary."""
+    """Run settlement over `ledger_path`, save updated CSV + summary JSON + weekly archive, and return summary."""
     if not ledger_path.exists():
         raise FileNotFoundError(f"Ledger not found: {ledger_path}")
 
@@ -541,6 +1037,25 @@ def settle_ledger(
     verified_roi = round(verified_profit / verified_staked * 100.0, 2) if verified_staked > 0 else None
 
     save_ledger_df(df, ledger_path, is_v4=is_v4)
+
+    # Matchweek Window (Tue-Mon) P&L + Permanent Weekly Archive
+    is_default_repo_ledger = ledger_path.resolve().parent == REPO_DIR.resolve()
+    eff_archive = archive_path if archive_path is not None else (
+        ARCHIVE_WEEKLY_FILE if is_default_repo_ledger else (ledger_path.parent / "weekly_archive.json")
+    )
+    eff_public_archive = public_archive_path if public_archive_path is not None else (
+        PUBLIC_WEEKLY_FILE if is_default_repo_ledger else None
+    )
+    closing_index = build_closing_odds_index(extra_records=live_records)
+    weekly_archive, transparency_banner = build_weekly_transparency_and_archive(
+        df=df,
+        archive_path=eff_archive,
+        public_archive_path=eff_public_archive,
+        closing_index=closing_index,
+        reference_now=cut,
+        persist=persist_archive,
+    )
+
     summary = {
         "cutoff": str(cut),
         "pending_before": int(len(pending)),
@@ -562,6 +1077,9 @@ def settle_ledger(
         "verified_staked": round(verified_staked, 4),
         "verified_roi_percent": verified_roi,
         "leagues": sorted(df["league"].dropna().astype(str).unique().tolist()),
+        "transparency_banner": transparency_banner,
+        "weekly_summary_count": int(weekly_archive["total_weeks"]),
+        "closed_weeks_count": int(weekly_archive["closed_weeks_count"]),
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary

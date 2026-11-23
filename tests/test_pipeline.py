@@ -583,5 +583,113 @@ class TestBig5ExpansionEVAndPublicExports(unittest.TestCase):
         self.assertEqual(app.iloc[0]["market"], "DNB Home")
 
 
+class TestMatchweekWindowWeeklyPnLAndArchiving(unittest.TestCase):
+    """(g) Matchweek Window (Tue-Mon UTC), Conservative Min-Odds + Kelly P&L, CLOSED_ARCHIVED & Transparency Banner."""
+
+    def test_matchweek_window_keeps_monday_with_weekend_and_splits_tuesday(self):
+        sat = sla.get_matchweek_window("2026-11-28 15:00:00")
+        sun = sla.get_matchweek_window("2026-11-29 18:00:00")
+        mon = sla.get_matchweek_window("2026-11-30 20:00:00")
+        tue_next = sla.get_matchweek_window("2026-12-01 00:00:00")
+
+        self.assertEqual(sat["matchweek_id"], "MW-2026-11-24_to_2026-11-30")
+        self.assertEqual(sun["matchweek_id"], sat["matchweek_id"])
+        self.assertEqual(mon["matchweek_id"], sat["matchweek_id"])
+        self.assertEqual(tue_next["matchweek_id"], "MW-2026-12-01_to_2026-12-07")
+
+    def test_weekly_pnl_conservative_kelly_flat_closing_and_permanent_archive(self):
+        import telegram_alerts as ta
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            arch_path = tmp_dir / "archive" / "weekly_archive.json"
+            pub_arch_path = tmp_dir / "public" / "weekly_archive.json"
+
+            # Week 1 (2026-11-17..2026-11-23): fully settled (1 WIN @ 1.50, 1 PUSH, 1 LOSS) -> CLOSED_ARCHIVED
+            # Week 2 (2026-11-24..2026-11-30): still PENDING -> ACTIVE
+            df = pd.DataFrame([
+                {
+                    "date": pd.Timestamp("2026-11-21 15:00:00"),
+                    "league": "La Liga", "home": "Real Madrid", "away": "Alaves",
+                    "market": "DNB Home", "selection_side": "HOME",
+                    "p_calibrated": 0.72, "min_odds": 1.50, "market_odds": np.nan,
+                    "stake": 0.04, "status": "WIN", "result": "2-0", "profit": np.nan, "odds_source": "",
+                },
+                {
+                    "date": pd.Timestamp("2026-11-22 18:00:00"),
+                    "league": "Serie A", "home": "Inter", "away": "Genoa",
+                    "market": "DNB Home", "selection_side": "HOME",
+                    "p_calibrated": 0.75, "min_odds": 1.42, "market_odds": np.nan,
+                    "stake": 0.02, "status": "PUSH", "result": "1-1", "profit": np.nan, "odds_source": "",
+                },
+                {
+                    "date": pd.Timestamp("2026-11-23 20:00:00"),
+                    "league": "La Liga", "home": "Real Betis", "away": "Sevilla",
+                    "market": "DNB Home", "selection_side": "HOME",
+                    "p_calibrated": 0.71, "min_odds": 1.50, "market_odds": np.nan,
+                    "stake": 0.01, "status": "LOSS", "result": "0-1", "profit": np.nan, "odds_source": "",
+                },
+                {
+                    "date": pd.Timestamp("2026-11-28 20:00:00"),
+                    "league": "La Liga", "home": "Barcelona", "away": "Getafe",
+                    "market": "DNB Home", "selection_side": "HOME",
+                    "p_calibrated": 0.80, "min_odds": 1.33, "market_odds": np.nan,
+                    "stake": 0.02, "status": "PENDING", "result": "", "profit": np.nan, "odds_source": "",
+                },
+            ])
+
+            # Closing odds for Real Madrid vs Alaves: PSCH=1.80, PSCD=4.00 => DNB Home = 1.80*(1-0.25) = 1.35
+            closing_idx = sla.build_closing_odds_index(
+                historical_path=Path(""),
+                extra_records=[
+                    {
+                        "league": "La Liga", "date": "2026-11-21",
+                        "home": "Real Madrid", "away": "Alaves",
+                        "PSCH": 1.80, "PSCD": 4.00, "PSCA": 5.00,
+                    },
+                    {
+                        "league": "La Liga", "date": "2026-11-23",
+                        "home": "Real Betis", "away": "Sevilla",
+                        "PSCH": 2.00, "PSCD": 3.50, "PSCA": 4.00,
+                    },
+                ],
+            )
+
+            archive, banner = sla.build_weekly_transparency_and_archive(
+                df=df,
+                archive_path=arch_path,
+                public_archive_path=pub_arch_path,
+                closing_index=closing_idx,
+                reference_now=pd.Timestamp("2026-11-25"),
+                persist=True,
+            )
+
+            self.assertTrue(arch_path.exists())
+            self.assertTrue(pub_arch_path.exists())
+            self.assertEqual(archive["closed_weeks_count"], 1)
+            self.assertEqual(banner["current_week"]["archive_status"], "ACTIVE")
+            self.assertEqual(banner["current_week"]["status"], "PENDING")
+
+            closed = banner["last_closed_week"]
+            self.assertIsNotNone(closed)
+            self.assertEqual(closed["archive_status"], "CLOSED_ARCHIVED")
+            self.assertEqual(closed["matchweek_id"], "MW-2026-11-17_to_2026-11-23")
+            # Kelly P&L = +0.04*(1.50-1) + 0.02*0 - 0.01*1 = +0.02 - 0.01 = +0.01 (+1.00% bankroll)
+            self.assertAlmostEqual(closed["kelly_bankroll_change_pct"], 1.0, places=2)
+            # Conservative ROI = +0.01 / (0.04+0.02+0.01) = +14.29%
+            self.assertAlmostEqual(closed["conservative_min_odds_roi_pct"], 14.29, places=2)
+            # Flat 1u = +0.50 + 0.00 - 1.00 = -0.50u
+            self.assertAlmostEqual(closed["flat_net_units"], -0.5, places=4)
+            # Closing ROI populated automatically
+            self.assertIsNotNone(closed["closing_odds_roi_pct"])
+            self.assertEqual(closed["status"], "PROFIT")
+
+            # Verify Telegram transparency header includes both active & last archived week
+            tg_header = ta.format_weekly_transparency_header(banner)
+            self.assertIn("الشفافية الأسبوعية", tg_header)
+            self.assertIn("MW-2026-11-17_to_2026-11-23" if False else "2026-11-17 → 2026-11-23", tg_header)
+            self.assertIn("+1.00%", tg_header)
+
+
 if __name__ == "__main__":
     unittest.main()

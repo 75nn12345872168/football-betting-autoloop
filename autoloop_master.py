@@ -46,14 +46,24 @@ from live_data import (
     sync_live_history,
 )
 from settle_ledger_auto import (
+    ARCHIVE_WEEKLY_FILE,
     LEDGER,
+    PUBLIC_WEEKLY_FILE,
     SUMMARY_FILE,
+    build_closing_odds_index,
+    build_weekly_transparency_and_archive,
     determine_selection_side,
+    get_matchweek_window,
     load_ledger_normalized,
     save_ledger_df,
     settle_ledger,
 )
 from team_strength import DEFAULT_XI, TeamStrengthModel, get_model, time_decay_weight
+from telegram_alerts import (
+    format_telegram_report as _tg_format_telegram_report,
+    format_weekly_transparency_header,
+    send_telegram_alert,
+)
 
 PUBLIC_DATA_DIR = REPO_DIR / "data" / "public"
 BACKTEST_STATS_FILE = PUBLIC_DATA_DIR / "backtest_verified_stats.json"
@@ -1178,113 +1188,24 @@ def record_approved_bets_to_ledger(
 
 
 # ==============================================================================
-# 7. TELEGRAM FORMATTING & DISPATCH (HONEST METRICS — NO FAKE 1.90 ROI)
+# 7. TELEGRAM FORMATTING & DISPATCH (DELEGATED TO telegram_alerts.py)
 # ==============================================================================
 
 def format_telegram_report(
-    summary: Dict[str, Any], df_opps: pd.DataFrame, critic_note: str = ""
+    summary: Dict[str, Any],
+    df_opps: pd.DataFrame,
+    critic_note: str = "",
+    transparency_banner: Optional[Dict[str, Any]] = None,
 ) -> str:
-    settled_now = int(summary.get("settled_now", 0))
-    total_settled = int(summary.get("total_settled_all_time", 0))
-    wins = int(summary.get("wins", 0))
-    half_wins = int(summary.get("half_wins", 0))
-    losses = int(summary.get("losses", 0))
-    hit_rate = float(summary.get("hit_rate_percent", 0.0))
-    pending = int(summary.get("pending_after", 0))
-
-    v_count = int(summary.get("verified_settled_count", 0))
-    v_profit = float(summary.get("verified_profit_units", 0.0))
-    v_roi = summary.get("verified_roi_percent")
-    if v_count > 0 and v_roi is not None:
-        roi_line = f"• العائد المالي المؤكد (ROI | {v_count} صفقة): <b>{v_roi:+.2f}%</b> ({v_profit:+.3f} وحدة)"
-    else:
-        roi_line = "• العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>"
-
-    _mle_bits = []
-    _seen = sorted(_FITTED_BY_LEAGUE.keys())
-    for _lg in _seen:
-        _p_h, _p_a, _p_r = get_league_params(_lg)
-        _mle_bits.append(f"{_lg.title()}: μH={_p_h:.2f} μA={_p_a:.2f} ρ={_p_r:.3f} ({get_league_mle_status(_lg)})")
-    _mle_txt = " | ".join(_mle_bits) if _mle_bits else "no active leagues"
-    _critic_block = f"• تدقيق الناقد: <code>{critic_note}</code>\n" if critic_note else ""
-
-    msg = f"""📊 <b>تسوية الجولة وإحصائيات النتائج الحقيقية</b>
-• الصفقات المسوّاة حديثاً: <b>{settled_now}</b>
-• سجل النتائج الفعلية ({total_settled} صفقة): <b>{wins} فوز / {half_wins} نصف فوز / {losses} خسارة</b> (الدقة: <b>{hit_rate:.1f}%</b>)
-{roi_line}
-• العمليات المعلقة: <b>{pending}</b>
-• معايرة MLE: <code>{_mle_txt}</code>
-{_critic_block}
-🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>
-"""
-
-    if df_opps.empty:
-        msg += "<i>لا توجد فرص مستوفية لمعايير الثقة والقيمة لهذه الجولة.</i>\n"
-    else:
-        _any_model = False
-        for _, r in df_opps.iterrows():
-            d_str = str(r["date"])[:10]
-            league = r["league"]
-            home = r["home"]
-            away = r["away"]
-            market = r["market"]
-            side = str(r.get("selection_side", "") or "").strip()
-            side_tag = f" [{side}]" if side else ""
-            p_cal = float(r.get("p_calibrated", r.get("p_model", 0.58))) * 100.0
-            stake = float(r.get("stake_kelly", 0.02)) * 100.0
-            pt = str(r.get("price_type", "model"))
-            if pt == "verified":
-                odds = float(r["market_odds"])
-                ev = float(r.get("ev_percent", 0.0))
-                price_line = f"  🎯 <b>{market}{side_tag}</b> @ <b>{odds:.2f}</b> (سعر سوق مؤكد | EV <code>{ev:+.1f}%</code>)\n"
-            else:
-                _any_model = True
-                mo = float(r.get("min_odds") or 0.0)
-                price_line = (
-                    f"  🎯 <b>{market}{side_tag}</b> | الثقة المعايَرة <b>{p_cal:.1f}%</b> "
-                    f"→ ابحث عن سعر ≥ <b>{mo:.2f}</b> <i>(+6% أمان)</i>\n"
-                )
-            msg += f"• <b>{d_str} | {league}</b>\n"
-            msg += f"  ⚽ {home} vs {away}\n"
-            msg += price_line
-            msg += f"  💼 حجم الرهان المقترح: <b>{stake:.2f}%</b>\n\n"
-        if _any_model:
-            msg += (
-                "⚠️ <i>وضع الوسيط (بدون THE_ODDS_API_KEY): الحد الأدنى للسعر يشمل هامش أمان +6% "
-                "فوق السعر العادل المعايَر. لا تراهن بأقل من الحد الأدنى المذكور.</i>\n"
-            )
-    msg += "━━━━━━━━━━━━━━━━━━━━\n"
-    msg += "⚡ <i>المحرك الكمي v2 (Time Decay + xG + Platt Calibration + Live Fixtures)</i>"
-    return msg.strip()
-
-
-def send_telegram_alert(message: str) -> bool:
-    import requests
-    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    tg_chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if tg_token and tg_chat:
-        try:
-            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-            r = requests.post(
-                url,
-                data={
-                    "chat_id": tg_chat,
-                    "text": message,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-                timeout=15,
-            )
-            if r.status_code == 200:
-                print("[TELEGRAM] Alert sent successfully (status: 200).")
-                return True
-            print(f"[TELEGRAM ERROR] status {r.status_code}: {r.text[:200]}")
-            return False
-        except Exception as e:
-            print(f"[TELEGRAM EXCEPTION] {e}")
-            return False
-    print("[TELEGRAM] No TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID detected. Running in local/dry mode.")
-    return False
+    return _tg_format_telegram_report(
+        summary=summary,
+        df_opps=df_opps,
+        critic_note=critic_note,
+        transparency_banner=transparency_banner,
+        mle_by_league=_FITTED_BY_LEAGUE,
+        get_league_params_fn=get_league_params,
+        get_league_status_fn=get_league_mle_status,
+    )
 
 
 # ==============================================================================
@@ -1330,23 +1251,81 @@ def export_public_json_bundle(
     summary: Dict[str, Any],
     ledger_path: Path = Path(LEDGER),
     public_dir: Path = PUBLIC_DATA_DIR,
+    archive_path: Optional[Path] = None,
+    closing_index: Optional[Dict[Any, Any]] = None,
 ) -> Dict[str, Path]:
     """
     Export clean, structured public JSON artifacts to `data/public/` for
     consumption by the global web platform (Next.js):
-      * predictions_latest.json
-      * performance_summary.json
+      * predictions_latest.json (includes top-level `transparency_banner`)
+      * performance_summary.json (includes weekly Conservative Floor + Kelly Weighted + Flat 1u + Closing Odds metrics)
+      * weekly_archive.json (mirrored to `data/archive/weekly_archive.json` for permanent closed-week records)
       (backtest_verified_stats.json is maintained by historical_odds_backtest.py)
     """
     public_dir.mkdir(parents=True, exist_ok=True)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # 1. predictions_latest.json
+    is_default_public = public_dir.resolve() == PUBLIC_DATA_DIR.resolve()
+    eff_archive = archive_path if archive_path is not None else (
+        ARCHIVE_WEEKLY_FILE if is_default_public else (public_dir.parent / "archive" / "weekly_archive.json")
+    )
+    eff_public_archive = PUBLIC_WEEKLY_FILE if is_default_public else (public_dir / "weekly_archive.json")
+
+    # 0. Load latest ledger (including newly recorded picks) and build Matchweek Window archive + transparency_banner
+    lpath = ledger_path if ledger_path.exists() else (REPO_DIR / LEDGER)
+    ldf = pd.DataFrame()
+    by_league: Dict[str, Dict[str, Any]] = {}
+    by_market: Dict[str, Dict[str, Any]] = {}
+    if lpath.exists():
+        try:
+            ldf, _ = load_ledger_normalized(lpath)
+            done = ldf[ldf["status"].isin(["WIN", "HALF WIN", "LOSS"])]
+            for lg, g in done.groupby("league"):
+                w = int((g["status"] == "WIN").sum())
+                hw = int((g["status"] == "HALF WIN").sum())
+                l = int((g["status"] == "LOSS").sum())
+                tot = len(g)
+                by_league[str(lg)] = {
+                    "settled": tot,
+                    "wins": w,
+                    "half_wins": hw,
+                    "losses": l,
+                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
+                }
+            for mk, g in done.groupby("market"):
+                w = int((g["status"] == "WIN").sum())
+                hw = int((g["status"] == "HALF WIN").sum())
+                l = int((g["status"] == "LOSS").sum())
+                tot = len(g)
+                by_market[str(mk)] = {
+                    "settled": tot,
+                    "wins": w,
+                    "half_wins": hw,
+                    "losses": l,
+                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
+                }
+        except Exception:
+            ldf = pd.DataFrame()
+
+    weekly_archive, transparency_banner = build_weekly_transparency_and_archive(
+        df=ldf,
+        archive_path=eff_archive,
+        public_archive_path=eff_public_archive,
+        closing_index=closing_index,
+        persist=True,
+    )
+    summary["transparency_banner"] = transparency_banner
+    summary["weekly_summary_count"] = int(weekly_archive["total_weeks"])
+    summary["closed_weeks_count"] = int(weekly_archive["closed_weeks_count"])
+
+    # 1. predictions_latest.json (with `transparency_banner` at top!)
     preds_list: List[Dict[str, Any]] = []
     if df_opps is not None and not df_opps.empty:
         for _, r in df_opps.iterrows():
+            mw = get_matchweek_window(r["date"])
             preds_list.append({
                 "date": str(r["date"])[:19],
+                "matchweek_id": mw["matchweek_id"],
                 "league": str(r["league"]),
                 "home": str(r["home"]),
                 "away": str(r["away"]),
@@ -1379,6 +1358,7 @@ def export_public_json_bundle(
     predictions_payload = {
         "generated_at": now_iso,
         "engine_version": "v4-alpha-promoted",
+        "transparency_banner": transparency_banner,
         "min_confidence_pct": round(DEFAULT_MODEL_TIP_MIN * 100.0, 1),
         "dnb_min_confidence_pct": round(DEFAULT_DNB_MIN * 100.0, 1),
         "safety_margin_pct": round((BROKER_SAFETY_MARGIN - 1.0) * 100.0, 1),
@@ -1391,45 +1371,19 @@ def export_public_json_bundle(
     pred_path = public_dir / "predictions_latest.json"
     pred_path.write_text(json.dumps(predictions_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # 2. performance_summary.json
-    lpath = ledger_path if ledger_path.exists() else (REPO_DIR / LEDGER)
-    by_league: Dict[str, Dict[str, Any]] = {}
-    by_market: Dict[str, Dict[str, Any]] = {}
-    if lpath.exists():
-        try:
-            ldf, _ = load_ledger_normalized(lpath)
-            done = ldf[ldf["status"].isin(["WIN", "HALF WIN", "LOSS"])]
-            for lg, g in done.groupby("league"):
-                w = int((g["status"] == "WIN").sum())
-                hw = int((g["status"] == "HALF WIN").sum())
-                l = int((g["status"] == "LOSS").sum())
-                tot = len(g)
-                by_league[str(lg)] = {
-                    "settled": tot,
-                    "wins": w,
-                    "half_wins": hw,
-                    "losses": l,
-                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
-                }
-            for mk, g in done.groupby("market"):
-                w = int((g["status"] == "WIN").sum())
-                hw = int((g["status"] == "HALF WIN").sum())
-                l = int((g["status"] == "LOSS").sum())
-                tot = len(g)
-                by_market[str(mk)] = {
-                    "settled": tot,
-                    "wins": w,
-                    "half_wins": hw,
-                    "losses": l,
-                    "hit_rate_percent": round((w + 0.5 * hw) / tot * 100.0, 2) if tot else 0.0,
-                }
-        except Exception:
-            pass
-
+    # 2. performance_summary.json (with Matchweek Window weekly metrics)
+    compact_weekly = [
+        {k: v for k, v in wk.items() if k != "picks"}
+        for wk in weekly_archive.get("weeks", [])
+    ]
     perf_payload = {
         "generated_at": now_iso,
         "engine_version": "v4-alpha-promoted",
+        "matchweek_window_rule": weekly_archive["matchweek_window_rule"],
+        "valuation_basis": weekly_archive["valuation_basis"],
         "approved_production_pairs": [[lg, mk] for lg, mk in APPROVED_PRODUCTION_PAIRS],
+        "transparency_banner": transparency_banner,
+        "weekly_performance": compact_weekly,
         "settlement": summary,
         "breakdown_by_league": by_league,
         "breakdown_by_market": by_market,
@@ -1437,7 +1391,11 @@ def export_public_json_bundle(
     perf_path = public_dir / "performance_summary.json"
     perf_path.write_text(json.dumps(perf_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return {"predictions_latest": pred_path, "performance_summary": perf_path}
+    return {
+        "predictions_latest": pred_path,
+        "performance_summary": perf_path,
+        "weekly_archive": eff_public_archive,
+    }
 
 
 def main() -> None:

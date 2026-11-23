@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-23T07:57:53.536764+00:00",
+  "timestamp": "2026-11-23T08:23:06.356974+00:00",
   "settlement": {
     "cutoff": "2026-11-23 00:00:00",
     "pending_before": 8,
@@ -23,7 +23,41 @@
       "EPL",
       "La Liga",
       "Serie A"
-    ]
+    ],
+    "transparency_banner": {
+      "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
+      "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
+      "current_week": {
+        "matchweek_id": "MW-2026-11-24_to_2026-11-30",
+        "window_start": "2026-11-24",
+        "window_end": "2026-11-30",
+        "window_start_utc": "2026-11-24T00:00:00Z",
+        "window_end_utc": "2026-11-30T23:59:59Z",
+        "label": "2026-11-24 → 2026-11-30",
+        "closed_at": null,
+        "archive_status": "ACTIVE",
+        "status": "PENDING",
+        "total_picks": 8,
+        "settled_picks": 0,
+        "pending_picks": 8,
+        "wins": 0,
+        "half_wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "hit_rate_percent": 0.0,
+        "total_staked_pct": 0.0,
+        "conservative_min_odds_roi_pct": null,
+        "kelly_bankroll_change_pct": 0.0,
+        "flat_net_units": 0.0,
+        "flat_roi_pct": null,
+        "closing_odds_roi_pct": null,
+        "closing_odds_sample_n": 0
+      },
+      "last_closed_week": null,
+      "closed_weeks_count": 0
+    },
+    "weekly_summary_count": 1,
+    "closed_weeks_count": 0
   },
   "opportunities_count": 8,
   "opportunities": [
@@ -271,7 +305,7 @@
   "rejected_count": 57,
   "rejected": [
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 19:45:00",
       "home": "Monza",
       "away": "Fiorentina",
@@ -300,7 +334,7 @@
       "reject_reason": "calibrated confidence p=0.45 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 19:45:00",
       "home": "Monza",
       "away": "Fiorentina",
@@ -329,7 +363,7 @@
       "reject_reason": "calibrated confidence p=0.41 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 19:45:00",
       "home": "Monza",
       "away": "Fiorentina",
@@ -358,7 +392,7 @@
       "reject_reason": "calibrated confidence p=0.54 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 20:00:00",
       "home": "Brentford",
       "away": "Everton",
@@ -387,7 +421,7 @@
       "reject_reason": "calibrated confidence p=0.68 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 20:00:00",
       "home": "Levante",
       "away": "Elche",
@@ -416,7 +450,7 @@
       "reject_reason": "calibrated confidence p=0.52 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-23 20:00:00",
       "home": "Levante",
       "away": "Elche",
@@ -445,7 +479,7 @@
       "reject_reason": "calibrated confidence p=0.69 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 19:45:00",
       "home": "Venezia",
       "away": "Bologna",
@@ -474,7 +508,7 @@
       "reject_reason": "calibrated confidence p=0.31 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 19:45:00",
       "home": "Venezia",
       "away": "Bologna",
@@ -503,7 +537,7 @@
       "reject_reason": "calibrated confidence p=0.52 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 19:45:00",
       "home": "Venezia",
       "away": "Bologna",
@@ -532,7 +566,7 @@
       "reject_reason": "calibrated confidence p=0.51 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 20:00:00",
       "home": "Levante",
       "away": "Racing Santander",
@@ -561,7 +595,7 @@
       "reject_reason": "calibrated confidence p=0.53 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 20:00:00",
       "home": "Levante",
       "away": "Racing Santander",
@@ -590,7 +624,7 @@
       "reject_reason": "calibrated confidence p=0.68 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-27 20:00:00",
       "home": "Nottingham Forest",
       "away": "Chelsea",
@@ -619,7 +653,7 @@
       "reject_reason": "calibrated confidence p=0.54 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 13:00:00",
       "home": "Real Betis",
       "away": "Rayo Vallecano",
@@ -648,7 +682,7 @@
       "reject_reason": "calibrated confidence p=0.55 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 14:00:00",
       "home": "Frosinone",
       "away": "Parma Calcio 1913",
@@ -677,7 +711,7 @@
       "reject_reason": "calibrated confidence p=0.21 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 14:00:00",
       "home": "Frosinone",
       "away": "Parma Calcio 1913",
@@ -706,7 +740,7 @@
       "reject_reason": "calibrated confidence p=0.58 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 15:00:00",
       "home": "Manchester United",
       "away": "Brentford",
@@ -735,7 +769,7 @@
       "reject_reason": "calibrated confidence p=0.60 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 15:15:00",
       "home": "Malaga",
       "away": "Athletic Club",
@@ -764,7 +798,7 @@
       "reject_reason": "calibrated confidence p=0.28 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 15:15:00",
       "home": "Malaga",
       "away": "Athletic Club",
@@ -793,7 +827,7 @@
       "reject_reason": "calibrated confidence p=0.41 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:00:00",
       "home": "Torino",
       "away": "Lazio",
@@ -822,7 +856,7 @@
       "reject_reason": "calibrated confidence p=0.34 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:00:00",
       "home": "Torino",
       "away": "Lazio",
@@ -851,7 +885,7 @@
       "reject_reason": "calibrated confidence p=0.48 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:00:00",
       "home": "Torino",
       "away": "Lazio",
@@ -880,7 +914,7 @@
       "reject_reason": "calibrated confidence p=0.46 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:30:00",
       "home": "Elche",
       "away": "Atletico Madrid",
@@ -909,7 +943,7 @@
       "reject_reason": "calibrated confidence p=0.25 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:30:00",
       "home": "Elche",
       "away": "Atletico Madrid",
@@ -938,7 +972,7 @@
       "reject_reason": "calibrated confidence p=0.33 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 17:30:00",
       "home": "Ipswich",
       "away": "Aston Villa",
@@ -967,7 +1001,7 @@
       "reject_reason": "calibrated confidence p=0.44 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 19:45:00",
       "home": "Inter",
       "away": "Genoa",
@@ -996,7 +1030,7 @@
       "reject_reason": "calibrated confidence p=0.12 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-28 19:45:00",
       "home": "Inter",
       "away": "Genoa",
@@ -1025,7 +1059,7 @@
       "reject_reason": "calibrated confidence p=0.56 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 11:30:00",
       "home": "Udinese",
       "away": "Fiorentina",
@@ -1054,7 +1088,7 @@
       "reject_reason": "calibrated confidence p=0.41 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 11:30:00",
       "home": "Udinese",
       "away": "Fiorentina",
@@ -1083,7 +1117,7 @@
       "reject_reason": "calibrated confidence p=0.44 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 11:30:00",
       "home": "Udinese",
       "away": "Fiorentina",
@@ -1112,7 +1146,7 @@
       "reject_reason": "calibrated confidence p=0.52 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 12:00:00",
       "home": "Everton",
       "away": "Liverpool",
@@ -1141,7 +1175,7 @@
       "reject_reason": "calibrated confidence p=0.40 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 13:00:00",
       "home": "Valencia",
       "away": "Osasuna",
@@ -1170,7 +1204,7 @@
       "reject_reason": "calibrated confidence p=0.44 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 13:00:00",
       "home": "Valencia",
       "away": "Osasuna",
@@ -1199,7 +1233,7 @@
       "reject_reason": "calibrated confidence p=0.62 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:00:00",
       "home": "Sassuolo",
       "away": "Napoli",
@@ -1228,7 +1262,7 @@
       "reject_reason": "calibrated confidence p=0.23 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:00:00",
       "home": "Sassuolo",
       "away": "Napoli",
@@ -1257,7 +1291,7 @@
       "reject_reason": "calibrated confidence p=0.60 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:00:00",
       "home": "Sassuolo",
       "away": "Napoli",
@@ -1286,7 +1320,7 @@
       "reject_reason": "calibrated confidence p=0.51 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:05:00",
       "home": "Brighton",
       "away": "Newcastle United",
@@ -1315,7 +1349,7 @@
       "reject_reason": "calibrated confidence p=0.69 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:05:00",
       "home": "Crystal Palace",
       "away": "Hull",
@@ -1344,7 +1378,7 @@
       "reject_reason": "calibrated confidence p=0.54 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:05:00",
       "home": "Fulham",
       "away": "Bournemouth",
@@ -1373,7 +1407,7 @@
       "reject_reason": "calibrated confidence p=0.47 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 14:05:00",
       "home": "Sunderland",
       "away": "Tottenham",
@@ -1402,7 +1436,7 @@
       "reject_reason": "calibrated confidence p=0.53 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 15:15:00",
       "home": "Deportivo La Coruna",
       "away": "Barcelona",
@@ -1431,7 +1465,7 @@
       "reject_reason": "calibrated confidence p=0.19 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 15:15:00",
       "home": "Deportivo La Coruna",
       "away": "Barcelona",
@@ -1460,7 +1494,7 @@
       "reject_reason": "calibrated confidence p=0.24 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 16:30:00",
       "home": "Arsenal",
       "away": "Manchester City",
@@ -1489,7 +1523,7 @@
       "reject_reason": "calibrated confidence p=0.68 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 17:00:00",
       "home": "Roma",
       "away": "Monza",
@@ -1518,7 +1552,7 @@
       "reject_reason": "calibrated confidence p=0.13 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 17:00:00",
       "home": "Roma",
       "away": "Monza",
@@ -1547,7 +1581,7 @@
       "reject_reason": "calibrated confidence p=0.59 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 17:30:00",
       "home": "Celta Vigo",
       "away": "Villarreal",
@@ -1576,7 +1610,7 @@
       "reject_reason": "calibrated confidence p=0.37 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 17:30:00",
       "home": "Celta Vigo",
       "away": "Villarreal",
@@ -1605,7 +1639,7 @@
       "reject_reason": "calibrated confidence p=0.51 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 19:45:00",
       "home": "Como",
       "away": "Juventus",
@@ -1634,7 +1668,7 @@
       "reject_reason": "calibrated confidence p=0.46 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 19:45:00",
       "home": "Como",
       "away": "Juventus",
@@ -1663,7 +1697,7 @@
       "reject_reason": "calibrated confidence p=0.39 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 19:45:00",
       "home": "Como",
       "away": "Juventus",
@@ -1692,7 +1726,7 @@
       "reject_reason": "calibrated confidence p=0.45 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-29 20:00:00",
       "home": "Real Sociedad",
       "away": "Sevilla",
@@ -1721,7 +1755,7 @@
       "reject_reason": "calibrated confidence p=0.53 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 17:30:00",
       "home": "Lecce",
       "away": "Atalanta",
@@ -1750,7 +1784,7 @@
       "reject_reason": "calibrated confidence p=0.24 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 17:30:00",
       "home": "Lecce",
       "away": "Atalanta",
@@ -1779,7 +1813,7 @@
       "reject_reason": "calibrated confidence p=0.60 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 17:30:00",
       "home": "Lecce",
       "away": "Atalanta",
@@ -1808,7 +1842,7 @@
       "reject_reason": "calibrated confidence p=0.56 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 19:45:00",
       "home": "Cagliari",
       "away": "AC Milan",
@@ -1837,7 +1871,7 @@
       "reject_reason": "calibrated confidence p=0.24 below 70% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 19:45:00",
       "home": "Cagliari",
       "away": "AC Milan",
@@ -1866,7 +1900,7 @@
       "reject_reason": "calibrated confidence p=0.59 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 19:45:00",
       "home": "Cagliari",
       "away": "AC Milan",
@@ -1895,7 +1929,7 @@
       "reject_reason": "calibrated confidence p=0.53 below 60% gate"
     },
     {
-      "timestamp": "2026-11-23 07:57:52",
+      "timestamp": "2026-11-23 08:23:04",
       "date": "2026-11-30 20:00:00",
       "home": "Espanyol",
       "away": "Getafe",
@@ -1924,7 +1958,7 @@
       "reject_reason": "calibrated confidence p=0.48 below 60% gate"
     }
   ],
-  "report_markdown": "📊 <b>تسوية الجولة وإحصائيات النتائج الحقيقية</b>\n• الصفقات المسوّاة حديثاً: <b>0</b>\n• سجل النتائج الفعلية (0 صفقة): <b>0 فوز / 0 نصف فوز / 0 خسارة</b> (الدقة: <b>0.0%</b>)\n• العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>\n• العمليات المعلقة: <b>8</b>\n• معايرة MLE: <code>Epl: μH=1.53 μA=1.23 ρ=-0.030 (cached) | La Liga: μH=1.57 μA=1.19 ρ=-0.020 (cached) | Serie A: μH=1.42 μA=1.29 ρ=0.020 (cached)</code>\n• تدقيق الناقد: <code>8 معتمدة / 57 مرفوضة (هامش أمان +6% | المحفظة: matchday-cap applied x1)</code>\n\n🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>\n• <b>2026-11-28 | La Liga</b>\n  ⚽ Real Betis vs Rayo Vallecano\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.6%</b> → ابحث عن سعر ≥ <b>1.46</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | Serie A</b>\n  ⚽ Frosinone vs Parma Calcio 1913\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.9%</b> → ابحث عن سعر ≥ <b>1.46</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | EPL</b>\n  ⚽ Leeds vs Coventry\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.6%</b> → ابحث عن سعر ≥ <b>1.48</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | Serie A</b>\n  ⚽ Inter vs Genoa\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>85.7%</b> → ابحث عن سعر ≥ <b>1.24</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | La Liga</b>\n  ⚽ Real Madrid vs Alaves\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>89.0%</b> → ابحث عن سعر ≥ <b>1.19</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-29 | Serie A</b>\n  ⚽ Roma vs Monza\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>83.7%</b> → ابحث عن سعر ≥ <b>1.27</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-29 | La Liga</b>\n  ⚽ Real Sociedad vs Sevilla\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.4%</b> → ابحث عن سعر ≥ <b>1.48</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-30 | La Liga</b>\n  ⚽ Espanyol vs Getafe\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.2%</b> → ابحث عن سعر ≥ <b>1.51</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n⚠️ <i>وضع الوسيط (بدون THE_ODDS_API_KEY): الحد الأدنى للسعر يشمل هامش أمان +6% فوق السعر العادل المعايَر. لا تراهن بأقل من الحد الأدنى المذكور.</i>\n━━━━━━━━━━━━━━━━━━━━\n⚡ <i>المحرك الكمي v2 (Time Decay + xG + Platt Calibration + Live Fixtures)</i>",
+  "report_markdown": "🛡️ <b>الشفافية الأسبوعية (نافذة الجولة: الثلاثاء–الاثنين UTC | Min Odds Floor)</b>\n⏳ <b>الجولة الجارية</b> (<code>2026-11-24 → 2026-11-30</code>): <b>قيد التنفيذ</b> — 8 صفقة معلّقة بانتظار التسوية\n📦 <b>آخر جولة مؤرشفة</b>: <i>لا توجد جولات مكتملة ومؤرشفة بعد (بداية سجل v4)</i>\n\n📊 <b>تسوية الجولة وإحصائيات النتائج الحقيقية</b>\n• الصفقات المسوّاة حديثاً: <b>0</b>\n• سجل النتائج الفعلية (0 صفقة): <b>0 فوز / 0 نصف فوز / 0 خسارة</b> (الدقة: <b>0.0%</b>)\n• العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>\n• العمليات المعلقة: <b>8</b>\n• معايرة MLE: <code>Epl: μH=1.53 μA=1.23 ρ=-0.030 (cached) | La Liga: μH=1.57 μA=1.19 ρ=-0.020 (cached) | Serie A: μH=1.42 μA=1.29 ρ=0.020 (cached)</code>\n• تدقيق الناقد: <code>8 معتمدة / 57 مرفوضة (هامش أمان +6% | المحفظة: matchday-cap applied x1)</code>\n\n🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>\n• <b>2026-11-28 | La Liga</b>\n  ⚽ Real Betis vs Rayo Vallecano\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.6%</b> → ابحث عن سعر ≥ <b>1.46</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | Serie A</b>\n  ⚽ Frosinone vs Parma Calcio 1913\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.9%</b> → ابحث عن سعر ≥ <b>1.46</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | EPL</b>\n  ⚽ Leeds vs Coventry\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.6%</b> → ابحث عن سعر ≥ <b>1.48</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | Serie A</b>\n  ⚽ Inter vs Genoa\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>85.7%</b> → ابحث عن سعر ≥ <b>1.24</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-28 | La Liga</b>\n  ⚽ Real Madrid vs Alaves\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>89.0%</b> → ابحث عن سعر ≥ <b>1.19</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-29 | Serie A</b>\n  ⚽ Roma vs Monza\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>83.7%</b> → ابحث عن سعر ≥ <b>1.27</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-29 | La Liga</b>\n  ⚽ Real Sociedad vs Sevilla\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>71.4%</b> → ابحث عن سعر ≥ <b>1.48</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n• <b>2026-11-30 | La Liga</b>\n  ⚽ Espanyol vs Getafe\n  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.2%</b> → ابحث عن سعر ≥ <b>1.51</b> <i>(+6% أمان)</i>\n  💼 حجم الرهان المقترح: <b>2.00%</b>\n\n⚠️ <i>وضع الوسيط (بدون THE_ODDS_API_KEY): الحد الأدنى للسعر يشمل هامش أمان +6% فوق السعر العادل المعايَر. لا تراهن بأقل من الحد الأدنى المذكور.</i>\n━━━━━━━━━━━━━━━━━━━━\n⚡ <i>المحرك الكمي v4 (Matchweek Window + Time Decay xG + Platt Calibration + Live Fixtures)</i>",
   "telegram_dispatched": false,
   "sent_fixture_keys": [
     "2026-11-27|Levante|Racing Santander|Over 2.5|",
