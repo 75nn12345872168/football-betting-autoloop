@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-23T20:54:35.089752+00:00",
+  "generated_at": "2026-11-24T17:01:30.062536+00:00",
   "engine_version": "v4-alpha-promoted",
   "transparency_banner": {
     "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
@@ -35,8 +35,8 @@
   },
   "live_odds_meta": {
     "provider": "the-odds-api-v4",
-    "live_priced_count": 8,
-    "live_actionable_count": 2
+    "live_priced_count": 9,
+    "live_actionable_count": 3
   },
   "min_confidence_pct": 60.0,
   "dnb_min_confidence_pct": 70.0,
@@ -74,9 +74,9 @@
   ],
   "mle_calibration": {
     "epl": {
-      "mu_home": 1.531,
-      "mu_away": 1.239,
-      "rho": -0.038,
+      "mu_home": 1.54,
+      "mu_away": 1.234,
+      "rho": -0.037,
       "status": "fitted",
       "n": 760
     },
@@ -88,14 +88,14 @@
       "n": 760
     },
     "serie a": {
-      "mu_home": 1.415,
-      "mu_away": 1.288,
+      "mu_home": 1.421,
+      "mu_away": 1.282,
       "rho": 0.022,
       "status": "fitted",
       "n": 760
     }
   },
-  "count": 8,
+  "count": 9,
   "predictions": [
     {
       "date": "2026-11-28 13:00:00",
@@ -105,21 +105,21 @@
       "away": "Rayo Vallecano",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6716,
-      "p_calibrated": 0.7261,
+      "p_model": 0.6717,
+      "p_calibrated": 0.7263,
       "price_type": "model",
       "min_odds": 1.46,
       "market_odds": 1.46,
-      "ev_percent": 6.01,
+      "ev_percent": 6.04,
       "stake_kelly": 0.02,
       "live_best_odds": 1.27,
-      "live_best_bookmaker": "Matchbook",
-      "live_pinnacle_odds": 1.24,
-      "live_ev_pct": -7.79,
+      "live_best_bookmaker": "Betfair",
+      "live_pinnacle_odds": 1.26,
+      "live_ev_pct": -7.76,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 1.69,
-        "away": 1.111
+        "home": 1.693,
+        "away": 1.113
       }
     },
     {
@@ -130,21 +130,21 @@
       "away": "Parma Calcio 1913",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6753,
-      "p_calibrated": 0.7281,
+      "p_model": 0.6781,
+      "p_calibrated": 0.7319,
       "price_type": "model",
-      "min_odds": 1.46,
-      "market_odds": 1.46,
-      "ev_percent": 6.3,
+      "min_odds": 1.45,
+      "market_odds": 1.45,
+      "ev_percent": 6.13,
       "stake_kelly": 0.02,
-      "live_best_odds": 1.27,
-      "live_best_bookmaker": "Coolbet",
-      "live_pinnacle_odds": 1.26,
-      "live_ev_pct": -7.53,
+      "live_best_odds": 1.25,
+      "live_best_bookmaker": "1xBet",
+      "live_pinnacle_odds": 1.24,
+      "live_ev_pct": -8.51,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 1.814,
-        "away": 1.187
+        "home": 1.82,
+        "away": 1.182
       }
     },
     {
@@ -155,21 +155,21 @@
       "away": "Coventry",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6633,
-      "p_calibrated": 0.7155,
+      "p_model": 0.6667,
+      "p_calibrated": 0.7201,
       "price_type": "model",
-      "min_odds": 1.48,
-      "market_odds": 1.48,
-      "ev_percent": 5.89,
+      "min_odds": 1.47,
+      "market_odds": 1.47,
+      "ev_percent": 5.85,
       "stake_kelly": 0.02,
-      "live_best_odds": 1.24,
+      "live_best_odds": 1.21,
       "live_best_bookmaker": "1xBet",
-      "live_pinnacle_odds": 1.2,
-      "live_ev_pct": -11.28,
+      "live_pinnacle_odds": 1.18,
+      "live_ev_pct": -12.87,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 1.603,
-        "away": 1.073
+        "home": 1.613,
+        "away": 1.07
       }
     },
     {
@@ -180,21 +180,21 @@
       "away": "Genoa",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.7798,
-      "p_calibrated": 0.8561,
+      "p_model": 0.7824,
+      "p_calibrated": 0.8589,
       "price_type": "model",
-      "min_odds": 1.24,
-      "market_odds": 1.24,
-      "ev_percent": 6.16,
+      "min_odds": 1.23,
+      "market_odds": 1.23,
+      "ev_percent": 5.64,
       "stake_kelly": 0.02,
       "live_best_odds": 1.12,
       "live_best_bookmaker": "1xBet",
-      "live_pinnacle_odds": 1.1,
-      "live_ev_pct": -4.12,
+      "live_pinnacle_odds": 1.09,
+      "live_ev_pct": -3.8,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 1.964,
-        "away": 0.93
+        "home": 1.971,
+        "away": 0.925
       }
     },
     {
@@ -212,14 +212,14 @@
       "market_odds": 1.19,
       "ev_percent": 5.92,
       "stake_kelly": 0.02,
-      "live_best_odds": 1.06,
+      "live_best_odds": 1.05,
       "live_best_bookmaker": "Smarkets",
       "live_pinnacle_odds": 1.03,
-      "live_ev_pct": -5.65,
+      "live_ev_pct": -6.54,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 2.113,
-        "away": 0.913
+        "home": 2.118,
+        "away": 0.916
       }
     },
     {
@@ -230,21 +230,21 @@
       "away": "Monza",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.7621,
-      "p_calibrated": 0.8366,
+      "p_model": 0.7577,
+      "p_calibrated": 0.8316,
       "price_type": "model",
       "min_odds": 1.27,
       "market_odds": 1.27,
-      "ev_percent": 6.25,
+      "ev_percent": 5.61,
       "stake_kelly": 0.02,
       "live_best_odds": 1.07,
-      "live_best_bookmaker": "Betfair",
+      "live_best_bookmaker": "Smarkets",
       "live_pinnacle_odds": 1.05,
-      "live_ev_pct": -10.48,
+      "live_ev_pct": -11.02,
       "is_live_actionable": false,
       "expected_goals": {
-        "home": 2.026,
-        "away": 1.034
+        "home": 2.021,
+        "away": 1.047
       }
     },
     {
@@ -255,21 +255,21 @@
       "away": "Sevilla",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6593,
-      "p_calibrated": 0.7093,
+      "p_model": 0.6594,
+      "p_calibrated": 0.7095,
       "price_type": "model",
       "min_odds": 1.49,
       "market_odds": 1.49,
-      "ev_percent": 5.69,
+      "ev_percent": 5.72,
       "stake_kelly": 0.02,
       "live_best_odds": 1.62,
-      "live_best_bookmaker": "Betfair",
-      "live_pinnacle_odds": 1.61,
-      "live_ev_pct": 14.91,
+      "live_best_bookmaker": "1xBet",
+      "live_pinnacle_odds": 1.59,
+      "live_ev_pct": 14.94,
       "is_live_actionable": true,
       "expected_goals": {
-        "home": 1.653,
-        "away": 1.121
+        "home": 1.656,
+        "away": 1.123
       }
     },
     {
@@ -280,21 +280,46 @@
       "away": "Getafe",
       "market": "DNB Home",
       "selection_side": "HOME",
-      "p_model": 0.6548,
-      "p_calibrated": 0.7031,
+      "p_model": 0.6549,
+      "p_calibrated": 0.7033,
       "price_type": "model",
       "min_odds": 1.51,
       "market_odds": 1.51,
-      "ev_percent": 6.17,
+      "ev_percent": 6.2,
       "stake_kelly": 0.02,
       "live_best_odds": 1.53,
       "live_best_bookmaker": "1xBet",
-      "live_pinnacle_odds": 1.43,
-      "live_ev_pct": 7.57,
+      "live_pinnacle_odds": 1.42,
+      "live_ev_pct": 7.6,
       "is_live_actionable": true,
       "expected_goals": {
-        "home": 1.278,
-        "away": 0.846
+        "home": 1.281,
+        "away": 0.848
+      }
+    },
+    {
+      "date": "2026-12-01 20:00:00",
+      "matchweek_id": "MW-2026-12-01_to_2026-12-07",
+      "league": "EPL",
+      "home": "Coventry",
+      "away": "Ipswich",
+      "market": "DNB Home",
+      "selection_side": "HOME",
+      "p_model": 0.6579,
+      "p_calibrated": 0.708,
+      "price_type": "model",
+      "min_odds": 1.5,
+      "market_odds": 1.5,
+      "ev_percent": 6.2,
+      "stake_kelly": 0.02,
+      "live_best_odds": 1.76,
+      "live_best_bookmaker": "1xBet",
+      "live_pinnacle_odds": 1.63,
+      "live_ev_pct": 24.61,
+      "is_live_actionable": true,
+      "expected_goals": {
+        "home": 1.672,
+        "away": 1.143
       }
     }
   ]

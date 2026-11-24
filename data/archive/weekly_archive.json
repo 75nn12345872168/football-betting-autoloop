@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-11-23T20:54:35.095671+00:00",
+  "generated_at": "2026-11-24T17:01:30.066820+00:00",
   "engine_version": "v4-alpha-promoted",
   "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
   "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
-  "total_weeks": 1,
+  "total_weeks": 2,
   "closed_weeks_count": 0,
-  "active_weeks_count": 1,
+  "active_weeks_count": 2,
   "transparency_banner": {
     "valuation_basis": "Conservative Min Odds Floor (+6% EV Margin) · Kelly Weighted",
     "matchweek_window_rule": "Tue 00:00 UTC – Mon 23:59 UTC",
@@ -39,6 +39,51 @@
     "closed_weeks_count": 0
   },
   "weeks": [
+    {
+      "matchweek_id": "MW-2026-12-01_to_2026-12-07",
+      "window_start": "2026-12-01",
+      "window_end": "2026-12-07",
+      "window_start_utc": "2026-12-01T00:00:00Z",
+      "window_end_utc": "2026-12-07T23:59:59Z",
+      "label": "2026-12-01 → 2026-12-07",
+      "closed_at": null,
+      "archive_status": "ACTIVE",
+      "status": "PENDING",
+      "total_picks": 1,
+      "settled_picks": 0,
+      "pending_picks": 1,
+      "wins": 0,
+      "half_wins": 0,
+      "losses": 0,
+      "pushes": 0,
+      "hit_rate_percent": 0.0,
+      "total_staked_pct": 0.0,
+      "conservative_min_odds_roi_pct": null,
+      "kelly_bankroll_change_pct": 0.0,
+      "flat_net_units": 0.0,
+      "flat_roi_pct": null,
+      "closing_odds_roi_pct": null,
+      "closing_odds_sample_n": 0,
+      "picks": [
+        {
+          "date": "2026-12-01 20:00:00",
+          "league": "EPL",
+          "home": "Coventry",
+          "away": "Ipswich",
+          "market": "DNB Home",
+          "selection_side": "HOME",
+          "calibrated_prob": 0.708,
+          "min_odds": 1.5,
+          "market_odds": null,
+          "closing_odds": null,
+          "stake_pct": 0.02,
+          "status": "PENDING",
+          "score": "",
+          "conservative_kelly_pnl_pct": null,
+          "flat_pnl_units": null
+        }
+      ]
+    },
     {
       "matchweek_id": "MW-2026-11-24_to_2026-11-30",
       "window_start": "2026-11-24",
