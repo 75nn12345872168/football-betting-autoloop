@@ -6,16 +6,79 @@
 • الصفقات المسوّاة حديثاً: <b>0</b>
 • سجل النتائج الفعلية (0 صفقة): <b>0 فوز / 0 نصف فوز / 0 خسارة</b> (الدقة: <b>0.0%</b>)
 • العائد المالي المؤكد (ROI): <i>بانتظار صفقات مسوّاة بأسعار سوق حقيقية</i>
-• العمليات المعلقة: <b>9</b>
-• معايرة MLE: <code>Epl: μH=1.54 μA=1.23 ρ=-0.037 (fitted) | La Liga: μH=1.57 μA=1.19 ρ=-0.019 (cached) | Serie A: μH=1.42 μA=1.28 ρ=0.022 (fitted)</code>
-• تدقيق الناقد: <code>1 معتمدة / 51 مرفوضة / 8 مكررة (هامش أمان +6% | المحفظة: matchday-cap applied x1)</code>
+• العمليات المعلقة: <b>21</b>
+• معايرة MLE: <code>Epl: μH=1.55 μA=1.24 ρ=-0.036 (fitted) | La Liga: μH=1.57 μA=1.19 ρ=-0.024 (cached) | Serie A: μH=1.42 μA=1.28 ρ=0.014 (fitted)</code>
+• تدقيق الناقد: <code>12 معتمدة / 71 مرفوضة / 9 مكررة (هامش أمان +6% | المحفظة: matchday-cap applied x2، global-cap applied)</code>
 
 🚀 <b>توصيات النموذج المعايَر للجولة القادمة</b>
-• <b>2026-12-01 | EPL</b>
-  ⚽ Coventry vs Ipswich
-  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.8%</b> → الحد الأدنى ≥ <b>1.50</b> <i>(+6% أمان)</i>
-  📡 السعر الحي: <b>1.76</b> @ <b>1xBet</b> | Pinnacle: <code>1.63</code> | EV حي: <code>+24.6%</code> | ✅ <b>LIVE +EV</b>
-  💼 حجم الرهان المقترح: <b>2.00%</b>
+• <b>2026-12-02 | EPL</b>
+  ⚽ Manchester City vs Leeds
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>78.1%</b> → الحد الأدنى ≥ <b>1.36</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.25</b> @ <b>Betfair</b> | Pinnacle: <code>1.22</code> | EV حي: <code>-2.4%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>1.43%</b>
+
+• <b>2026-12-02 | EPL</b>
+  ⚽ Chelsea vs Crystal Palace
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.2%</b> → الحد الأدنى ≥ <b>1.47</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.31</b> @ <b>1xBet</b> | Pinnacle: <code>1.26</code> | EV حي: <code>-5.3%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>1.43%</b>
+
+• <b>2026-12-02 | EPL</b>
+  ⚽ Liverpool vs Sunderland
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>82.5%</b> → الحد الأدنى ≥ <b>1.28</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.20</b> @ <b>1xBet</b> | Pinnacle: <code>1.12</code> | EV حي: <code>-1.0%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>1.43%</b>
+
+• <b>2026-12-02 | La Liga</b>
+  ⚽ Barcelona vs Atletico Madrid
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>83.1%</b> → الحد الأدنى ≥ <b>1.28</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.21</b> @ <b>1xBet</b> | Pinnacle: <code>1.13</code> | EV حي: <code>+0.6%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>1.43%</b>
+
+• <b>2026-12-05 | EPL</b>
+  ⚽ Leeds vs Ipswich
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>79.8%</b> → الحد الأدنى ≥ <b>1.33</b> <i>(+6% أمان)</i>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | EPL</b>
+  ⚽ Bournemouth vs Hull
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.5%</b> → الحد الأدنى ≥ <b>1.46</b> <i>(+6% أمان)</i>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | EPL</b>
+  ⚽ Manchester United vs Coventry
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>70.4%</b> → الحد الأدنى ≥ <b>1.51</b> <i>(+6% أمان)</i>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | La Liga</b>
+  ⚽ Rayo Vallecano vs Levante
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>72.2%</b> → الحد الأدنى ≥ <b>1.47</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.40</b> @ <b>1xBet</b> | Pinnacle: <code>1.35</code> | EV حي: <code>+1.1%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | Serie A</b>
+  ⚽ Frosinone vs Inter
+  🎯 <b>1X2 Away Win [AWAY]</b> | الثقة المعايَرة <b>69.6%</b> → الحد الأدنى ≥ <b>1.52</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.48</b> @ <b>1xBet</b> | Pinnacle: <code>1.44</code> | EV حي: <code>+3.0%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | La Liga</b>
+  ⚽ Villarreal vs Real Sociedad
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>79.5%</b> → الحد الأدنى ≥ <b>1.33</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.38</b> @ <b>1xBet</b> | Pinnacle: <code>1.34</code> | EV حي: <code>+9.7%</code> | ✅ <b>LIVE +EV</b>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | Serie A</b>
+  ⚽ Napoli vs Lecce
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>84.7%</b> → الحد الأدنى ≥ <b>1.25</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.12</b> @ <b>1xBet</b> | Pinnacle: <code>1.07</code> | EV حي: <code>-5.2%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
+
+• <b>2026-12-05 | La Liga</b>
+  ⚽ Barcelona vs Celta Vigo
+  🎯 <b>DNB Home [HOME]</b> | الثقة المعايَرة <b>91.6%</b> → الحد الأدنى ≥ <b>1.16</b> <i>(+6% أمان)</i>
+  📡 السعر الحي: <b>1.02</b> @ <b>Unibet (SE)</b> | EV حي: <code>-6.5%</code> | ⏳ <b>WAIT FOR ODDS</b>
+  💼 حجم الرهان المقترح: <b>0.78%</b>
 
 📡 <i>الأسعار الحية مدمجة من The Odds API v4: ادخل فقط عند شارة ✅ LIVE +EV وتوفّر سعر ≥ الحد الأدنى (+6% هامش أمان).</i>
 ━━━━━━━━━━━━━━━━━━━━

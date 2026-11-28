@@ -1,11 +1,11 @@
 {
-  "cutoff": "2026-11-24 00:00:00",
-  "pending_before": 8,
-  "eligible_played": 0,
+  "cutoff": "2026-11-28 00:00:00",
+  "pending_before": 9,
+  "eligible_played": 5,
   "settled_now": 0,
-  "result_not_found": 0,
+  "result_not_found": 5,
   "ambiguous_average": 0,
-  "pending_after": 8,
+  "pending_after": 9,
   "total_settled_all_time": 0,
   "wins": 0,
   "half_wins": 0,
@@ -54,6 +54,6 @@
     "last_closed_week": null,
     "closed_weeks_count": 0
   },
-  "weekly_summary_count": 1,
+  "weekly_summary_count": 2,
   "closed_weeks_count": 0
 }

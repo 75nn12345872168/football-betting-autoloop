@@ -21,8 +21,8 @@ date,home,away,goals_home,goals_away,xG_home,xG_away,source
 2026-09-04 18:00:00,Lyon,Auxerre,3,1,2.85,0.71,football-data.co.uk
 2026-09-04 20:05:00,Paris Saint Germain,Monaco,1,2,2.32,0.5,football-data.co.uk
 2026-09-05 16:15:00,Lens,Lorient,0,1,1.24,1.6,football-data.co.uk
-2026-09-05 19:45:00,Nice,Le Mans,1,1,1.13,1.28,football-data.co.uk
 2026-09-05 19:45:00,Le Havre,Brest,1,2,2.01,2.37,football-data.co.uk
+2026-09-05 19:45:00,Nice,Le Mans,1,1,1.13,1.28,football-data.co.uk
 2026-09-06 14:00:00,Troyes,Strasbourg,2,6,2.94,2.95,football-data.co.uk
 2026-09-06 16:15:00,Angers,Rennes,1,2,1.65,1.54,football-data.co.uk
 2026-09-06 19:45:00,Marseille,Paris FC,2,3,1.42,3.29,football-data.co.uk
@@ -46,10 +46,10 @@ date,home,away,goals_home,goals_away,xG_home,xG_away,source
 2026-09-20 19:45:00,Marseille,Paris Saint Germain,1,2,1.98,5.09,football-data.co.uk
 2026-10-09 19:45:00,Lens,Lyon,2,1,1.37,0.99,football-data.co.uk
 2026-10-10 16:15:00,Lille,Le Havre,1,0,1.19,1.3,football-data.co.uk
-2026-10-10 19:45:00,Paris Saint Germain,Le Mans,3,1,4.25,1.43,football-data.co.uk
-2026-10-10 19:45:00,Monaco,Toulouse,2,2,1.17,1.43,football-data.co.uk
-2026-10-10 19:45:00,Lorient,Paris FC,1,0,0.55,0.97,football-data.co.uk
 2026-10-10 19:45:00,Brest,Angers,5,1,3.82,1.39,football-data.co.uk
+2026-10-10 19:45:00,Lorient,Paris FC,1,0,0.55,0.97,football-data.co.uk
+2026-10-10 19:45:00,Monaco,Toulouse,2,2,1.17,1.43,football-data.co.uk
+2026-10-10 19:45:00,Paris Saint Germain,Le Mans,3,1,4.25,1.43,football-data.co.uk
 2026-10-11 14:00:00,Nice,Strasbourg,2,1,1.25,0.63,football-data.co.uk
 2026-10-11 16:15:00,Rennes,Auxerre,4,1,2.56,1.76,football-data.co.uk
 2026-10-11 19:45:00,Troyes,Marseille,0,2,1.06,1.3,football-data.co.uk
@@ -58,9 +58,9 @@ date,home,away,goals_home,goals_away,xG_home,xG_away,source
 2026-10-17 19:45:00,Lille,Brest,1,1,2.17,0.78,football-data.co.uk
 2026-10-17 19:45:00,Troyes,Lens,1,3,1.24,1.43,football-data.co.uk
 2026-10-18 14:00:00,Angers,Marseille,2,5,2.21,2.71,football-data.co.uk
-2026-10-18 16:15:00,Paris FC,Rennes,4,3,3.62,3.35,football-data.co.uk
 2026-10-18 16:15:00,Lorient,Monaco,1,0,1.74,0.6,football-data.co.uk
 2026-10-18 16:15:00,Le Havre,Auxerre,1,3,1.4,2.7,football-data.co.uk
+2026-10-18 16:15:00,Paris FC,Rennes,4,3,3.62,3.35,football-data.co.uk
 2026-10-18 19:45:00,Lyon,Nice,2,1,1.5,1.55,football-data.co.uk
 2026-10-23 19:45:00,Brest,Nice,1,2,2.46,0.47,football-data.co.uk
 2026-10-24 19:45:00,Lens,Paris FC,2,1,1.06,0.42,football-data.co.uk
@@ -84,10 +84,10 @@ date,home,away,goals_home,goals_away,xG_home,xG_away,source
 2026-11-07 18:00:00,Auxerre,Paris FC,0,1,0.81,0.76,football-data.co.uk
 2026-11-07 20:05:00,Paris Saint Germain,Troyes,1,0,2.06,0.65,football-data.co.uk
 2026-11-08 14:00:00,Rennes,Lille,1,2,1.53,0.36,football-data.co.uk
-2026-11-08 16:15:00,Le Mans,Monaco,1,1,1.45,0.96,football-data.co.uk
-2026-11-08 16:15:00,Le Havre,Lorient,0,2,0.96,1.65,football-data.co.uk
-2026-11-08 16:15:00,Angers,Nice,0,2,0.85,2.13,football-data.co.uk
 2026-11-08 16:15:00,Brest,Lyon,2,0,1.84,0.64,football-data.co.uk
+2026-11-08 16:15:00,Angers,Nice,0,2,0.85,2.13,football-data.co.uk
+2026-11-08 16:15:00,Le Havre,Lorient,0,2,0.96,1.65,football-data.co.uk
+2026-11-08 16:15:00,Le Mans,Monaco,1,1,1.45,0.96,football-data.co.uk
 2026-11-08 19:45:00,Lens,Marseille,1,2,2.05,2.19,football-data.co.uk
 2026-11-20 19:45:00,Troyes,Le Havre,3,1,,,espn
 2026-11-21 16:15:00,Nice,Paris Saint Germain,2,3,,,espn
@@ -98,3 +98,4 @@ date,home,away,goals_home,goals_away,xG_home,xG_away,source
 2026-11-22 14:00:00,Paris FC,Angers,4,0,,,espn
 2026-11-22 16:15:00,Lorient,Rennes,1,1,,,espn
 2026-11-22 19:45:00,Marseille,Le Mans,2,3,,,espn
+2026-11-27 19:45:00,Brest,Paris FC,1,0,,,football-data.co.uk/fixtures
